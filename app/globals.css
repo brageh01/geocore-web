@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import "cesium/Build/Cesium/Widgets/widgets.css";
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #e5e5e5;
+  --muted: #737373;
+  --border: #262626;
+  --fire: #FF4500;
+  --aqi-good: #00E400;
+  --aqi-moderate: #FFFF00;
+  --aqi-unhealthy-sensitive: #FF7E00;
+  --aqi-unhealthy: #FF0000;
+  --aqi-very-unhealthy: #8F3F97;
+  --aqi-hazardous: #7E0023;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Hide Cesium default UI chrome */
+.cesium-viewer-toolbar,
+.cesium-viewer-animationContainer,
+.cesium-viewer-timelineContainer,
+.cesium-viewer-bottom,
+.cesium-viewer-fullscreenContainer,
+.cesium-credit-logoContainer,
+.cesium-credit-textContainer,
+.cesium-credit-expand-link {
+  display: none !important;
+}
+
+.cesium-viewer .cesium-widget-credits {
+  display: none !important;
+}
