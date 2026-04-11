@@ -1,6 +1,7 @@
 import {
   Ion,
   buildModuleUrl,
+  CameraEventType,
   createGooglePhotorealistic3DTileset,
   Viewer,
   Math as CesiumMath,
@@ -67,7 +68,19 @@ export async function initializeViewer(
     viewer.scene.skyAtmosphere.show = true;
   }
   viewer.scene.globe.enableLighting = false;
+  // Depth-test markers against terrain so points on the far side of the
+  // earth are hidden behind the globe instead of rendering through it.
+  viewer.scene.globe.depthTestAgainstTerrain = true;
   viewer.scene.backgroundColor = new Color(0.04, 0.04, 0.04, 1.0);
+
+  // Input / zoom configuration — ensure mouse wheel AND trackpad pinch both
+  // drive zoom, and remove PINCH from tiltEventTypes so two-finger gestures
+  // on a trackpad zoom cleanly instead of fighting with tilt.
+  const controller = viewer.scene.screenSpaceCameraController;
+  controller.zoomEventTypes = [CameraEventType.WHEEL, CameraEventType.PINCH];
+  controller.tiltEventTypes = [CameraEventType.MIDDLE_DRAG];
+  controller.minimumZoomDistance = 500;
+  controller.maximumZoomDistance = 20_000_000;
 
   return viewer;
 }

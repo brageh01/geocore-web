@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { FireEvent } from "@/types";
 
 interface ActiveLayers {
   fires: boolean;
@@ -6,22 +7,25 @@ interface ActiveLayers {
 }
 
 interface GeocoreState {
-  selectedFireId: string | null;
+  // Full selected fire, stored inline so EventCard can render instantly
+  // from the click payload without re-fetching or searching a separate
+  // fires array.
+  selectedFire: FireEvent | null;
   activeLayers: ActiveLayers;
   timelineDate: Date;
-  setSelectedFireId: (id: string | null) => void;
+  setSelectedFire: (fire: FireEvent | null) => void;
   toggleLayer: (layer: keyof ActiveLayers) => void;
   setTimelineDate: (date: Date) => void;
 }
 
 export const useGeocore = create<GeocoreState>((set) => ({
-  selectedFireId: null,
+  selectedFire: null,
   activeLayers: {
     fires: true,
     aqi: true,
   },
   timelineDate: new Date(),
-  setSelectedFireId: (id) => set({ selectedFireId: id }),
+  setSelectedFire: (fire) => set({ selectedFire: fire }),
   toggleLayer: (layer) =>
     set((state) => ({
       activeLayers: {

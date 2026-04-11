@@ -1,26 +1,21 @@
 "use client";
 
 import { useGeocore } from "@/store/useGeocore";
-import { useFireData } from "@/hooks/useFireData";
 
-interface EventCardProps {
-  fireId: string;
-}
+export default function EventCard() {
+  const fire = useGeocore((s) => s.selectedFire);
+  const setSelectedFire = useGeocore((s) => s.setSelectedFire);
 
-export default function EventCard({ fireId }: EventCardProps) {
-  const setSelectedFireId = useGeocore((s) => s.setSelectedFireId);
-  const { fires } = useFireData();
-  const fire = fires.find((f) => f.id === fireId);
+  if (!fire) return null;
 
-  if (!fire) {
-    return (
-      <div className="p-3">
-        <p className="text-xs text-[#737373] font-mono">
-          Loading event data...
-        </p>
-      </div>
-    );
-  }
+  const lonLabel =
+    fire.longitude >= 0
+      ? `${fire.longitude.toFixed(4)}°E`
+      : `${Math.abs(fire.longitude).toFixed(4)}°W`;
+  const latLabel =
+    fire.latitude >= 0
+      ? `${fire.latitude.toFixed(4)}°N`
+      : `${Math.abs(fire.latitude).toFixed(4)}°S`;
 
   return (
     <div className="p-3">
@@ -29,7 +24,7 @@ export default function EventCard({ fireId }: EventCardProps) {
           Fire Event
         </h2>
         <button
-          onClick={() => setSelectedFireId(null)}
+          onClick={() => setSelectedFire(null)}
           className="font-mono text-[10px] text-[#737373] hover:text-[#e5e5e5] transition-colors"
         >
           CLOSE
@@ -38,10 +33,7 @@ export default function EventCard({ fireId }: EventCardProps) {
 
       <div className="space-y-2">
         <DataRow label="ID" value={fire.id} />
-        <DataRow
-          label="Location"
-          value={`${fire.latitude.toFixed(4)}°N, ${fire.longitude.toFixed(4)}°W`}
-        />
+        <DataRow label="Location" value={`${latLabel}, ${lonLabel}`} />
         <DataRow label="Brightness" value={`${fire.brightness.toFixed(1)} K`} />
         <DataRow label="FRP" value={`${fire.frp.toFixed(1)} MW`} />
         <DataRow label="Confidence" value={fire.confidence} />

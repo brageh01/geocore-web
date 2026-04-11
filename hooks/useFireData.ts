@@ -1,45 +1,49 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { FireEvent, FireGeoJSON } from "@/types";
-import { useGeocore } from "@/store/useGeocore";
 
 interface UseFireDataReturn {
   fires: FireEvent[];
   loading: boolean;
   error: string | null;
-  refetch: () => void;
+  /**
+   * Load fires for the given bbox (west,south,east,north in degrees).
+   * Pass `undefined` to fetch the global default set.
+   * Aborts any in-flight fetch so stale responses can't overwrite fresh ones.
+   */
+  loadFires: (bbox?: string) => Promise<void>;
 }
+
+// Module-scoped abort controller. One in-flight fire fetch across the whole
+// app — every new call aborts the previous one, so rapid camera moves can
+// never stack overlapping requests.
+let inFlightController: AbortController | null = null;
 
 export function useFireData(): UseFireDataReturn {
   const [fires, setFires] = useState<FireEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const timelineDate = useGeocore((s) => s.timelineDate);
-  const abortRef = useRef<AbortController | null>(null);
 
-  const fetchFires = useCallback(async () => {
-    abortRef.current?.abort();
+  const loadFires = useCallback(async (bbox?: string) => {
+    inFlightController?.abort();
     const controller = new AbortController();
-    abortRef.current = controller;
+    inFlightController = controller;
 
     setLoading(true);
     setError(null);
 
     try {
-      const params = new URLSearchParams({
-        date: timelineDate.toISOString().split("T")[0],
-      });
+      const params = new URLSearchParams();
+      if (bbox) params.set("area", bbox);
+      const qs = params.toString();
+      const url = qs ? `/api/fires?${qs}` : "/api/fires";
 
-      const res = await fetch(`/api/fires?${params}`, {
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch fire data: ${res.status}`);
-      }
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`Failed to fetch fire data: ${res.status}`);
 
       const geojson: FireGeoJSON = await res.json();
+      if (controller.signal.aborted) return;
 
       const events: FireEvent[] = geojson.features.map((f) => ({
         id: f.id,
@@ -53,17 +57,16 @@ export function useFireData(): UseFireDataReturn {
       if (err instanceof Error && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [timelineDate]);
+  }, []);
 
   useEffect(() => {
-    fetchFires();
-
     return () => {
-      abortRef.current?.abort();
+      inFlightController?.abort();
+      inFlightController = null;
     };
-  }, [fetchFires]);
+  }, []);
 
-  return { fires, loading, error, refetch: fetchFires };
+  return { fires, loading, error, loadFires };
 }

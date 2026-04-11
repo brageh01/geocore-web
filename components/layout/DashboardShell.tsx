@@ -16,7 +16,7 @@ const GlobeViewer = dynamic(() => import("@/components/globe/GlobeViewer"), {
 });
 
 export default function DashboardShell() {
-  const selectedFireId = useGeocore((s) => s.selectedFireId);
+  const selectedFire = useGeocore((s) => s.selectedFire);
   const activeLayers = useGeocore((s) => s.activeLayers);
   const toggleLayer = useGeocore((s) => s.toggleLayer);
 
@@ -70,8 +70,8 @@ export default function DashboardShell() {
 
         {/* Right sidebar — event details */}
         <aside className="w-80 border-l border-[#262626] bg-[#0a0a0a] overflow-y-auto shrink-0">
-          {selectedFireId ? (
-            <EventCard fireId={selectedFireId} />
+          {selectedFire ? (
+            <EventCard />
           ) : (
             <div className="p-3">
               <h2 className="font-mono text-[10px] font-bold tracking-widest text-[#737373] uppercase mb-3">
