@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import {
   Viewer,
   Cartesian2,
   Cartesian3,
   Color,
-  VerticalOrigin,
   NearFarScalar,
-  Entity,
+  PointPrimitiveCollection,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   defined,
@@ -20,82 +19,91 @@ interface FireLayerProps {
   viewer: Viewer;
 }
 
+// Fire point visual id — attached to each PointPrimitive so scene.pick can resolve it.
+interface FirePickId {
+  type: "fire";
+  fireId: string;
+}
+
+function colorForFrp(frp: number): Color {
+  // EPA-ish orange→red gradient based on fire radiative power (MW)
+  if (frp >= 100) return Color.fromCssColorString("#FF1A00");
+  if (frp >= 50) return Color.fromCssColorString("#FF3D00");
+  if (frp >= 20) return Color.fromCssColorString("#FF6A00");
+  if (frp >= 5) return Color.fromCssColorString("#FF8C1A");
+  return Color.fromCssColorString("#FFB347");
+}
+
+function sizeForFrp(frp: number): number {
+  // 6px baseline, up to ~14px for very intense fires
+  if (frp >= 100) return 14;
+  if (frp >= 50) return 12;
+  if (frp >= 20) return 10;
+  if (frp >= 5) return 8;
+  return 6;
+}
+
 export default function FireLayer({ viewer }: FireLayerProps) {
   const { fires } = useFireData();
   const setSelectedFireId = useGeocore((s) => s.setSelectedFireId);
-  const entitiesRef = useRef<Entity[]>([]);
+  const collectionRef = useRef<PointPrimitiveCollection | null>(null);
   const handlerRef = useRef<ScreenSpaceEventHandler | null>(null);
 
-  // Create a fire pin canvas for billboard
-  const fireIconDataUrl = useMemo(() => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 24;
-    canvas.height = 24;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.beginPath();
-      ctx.arc(12, 12, 10, 0, Math.PI * 2);
-      ctx.fillStyle = "#FF4500";
-      ctx.fill();
-      ctx.strokeStyle = "#FF6A33";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-    return canvas.toDataURL();
-  }, []);
-
-  // Render fire entities
+  // Render fire points into a single GPU-batched PointPrimitiveCollection.
+  // This is dramatically faster than adding one Entity per fire when there
+  // are tens of thousands of points.
   useEffect(() => {
     if (!viewer || viewer.isDestroyed()) return;
 
-    // Clear previous entities
-    for (const entity of entitiesRef.current) {
-      viewer.entities.remove(entity);
+    // Tear down previous collection
+    if (collectionRef.current) {
+      viewer.scene.primitives.remove(collectionRef.current);
+      collectionRef.current = null;
     }
-    entitiesRef.current = [];
 
-    // Add new fire markers
+    if (fires.length === 0) return;
+
+    const collection = new PointPrimitiveCollection();
+    viewer.scene.primitives.add(collection);
+    collectionRef.current = collection;
+
+    const scaleByDistance = new NearFarScalar(1_000_000, 1.0, 20_000_000, 0.3);
+
     for (const fire of fires) {
-      const entity = viewer.entities.add({
-        id: `fire-${fire.id}`,
+      const pickId: FirePickId = { type: "fire", fireId: fire.id };
+      collection.add({
         position: Cartesian3.fromDegrees(fire.longitude, fire.latitude),
-        billboard: {
-          image: fireIconDataUrl,
-          verticalOrigin: VerticalOrigin.CENTER,
-          scaleByDistance: new NearFarScalar(1_000_000, 1.0, 10_000_000, 0.4),
-          color: Color.fromCssColorString("#FF4500"),
-          width: 16,
-          height: 16,
-        },
-        properties: {
-          fireId: fire.id,
-          type: "fire",
-        } as any,
+        color: colorForFrp(fire.frp),
+        pixelSize: sizeForFrp(fire.frp),
+        outlineColor: Color.fromCssColorString("#FFD6A0"),
+        outlineWidth: 1,
+        scaleByDistance,
+        // Render points on top of 3D Tiles terrain — without this they
+        // get occluded by Google Photorealistic 3D Tiles and disappear.
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        id: pickId,
       });
-      entitiesRef.current.push(entity);
     }
 
     return () => {
-      for (const entity of entitiesRef.current) {
-        if (!viewer.isDestroyed()) {
-          viewer.entities.remove(entity);
-        }
+      if (!viewer.isDestroyed() && collectionRef.current) {
+        viewer.scene.primitives.remove(collectionRef.current);
       }
-      entitiesRef.current = [];
+      collectionRef.current = null;
     };
-  }, [viewer, fires, fireIconDataUrl]);
+  }, [viewer, fires]);
 
-  // Handle click events
+  // Click picking — scene.pick returns the PointPrimitive; its `id` is our FirePickId.
   const handleClick = useCallback(
     (event: { position: Cartesian2 }) => {
       if (!viewer || viewer.isDestroyed()) return;
 
       const picked = viewer.scene.pick(event.position);
-      if (defined(picked) && picked.id && picked.id.id?.startsWith("fire-")) {
-        const fireId = picked.id.properties?.fireId?.getValue();
-        if (fireId) {
-          setSelectedFireId(fireId);
-        }
+      if (!defined(picked)) return;
+
+      const pickId = picked.id as FirePickId | undefined;
+      if (pickId && pickId.type === "fire" && pickId.fireId) {
+        setSelectedFireId(pickId.fireId);
       }
     },
     [viewer, setSelectedFireId]

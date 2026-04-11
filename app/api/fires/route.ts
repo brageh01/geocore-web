@@ -25,20 +25,20 @@ export async function GET(request: NextRequest) {
   }
 
   const searchParams = request.nextUrl.searchParams;
-  // Default: world bounding box, 1 day of data
-  // Using "world" shorthand — FIRMS supports this as area parameter
-  const area = searchParams.get("area") || "world";
-  const days = searchParams.get("days") || "1";
+  // FIRMS requires an explicit bbox (west,south,east,north). The "world"
+  // shorthand returns 0 rows. Default to the full globe.
+  const area = searchParams.get("area") || "-180,-90,180,90";
+  // VIIRS NRT data has ~3h ingestion latency, so days=1 is frequently empty
+  // depending on time of day. Default to 2 days to guarantee a populated set.
+  const days = searchParams.get("days") || "2";
 
   // Clamp days to max 10 to avoid hitting rate limits
-  const clampedDays = Math.min(Math.max(parseInt(days, 10) || 1, 1), 10);
+  const clampedDays = Math.min(Math.max(parseInt(days, 10) || 2, 1), 10);
 
   const url = `${FIRMS_BASE}/${apiKey}/VIIRS_SNPP_NRT/${area}/${clampedDays}`;
 
   try {
-    const response = await fetch(url, {
-      next: { revalidate: 300 }, // Cache for 5 minutes
-    });
+    const response = await fetch(url, { cache: "no-store" });
 
     if (!response.ok) {
       const text = await response.text();
