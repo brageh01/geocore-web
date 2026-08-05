@@ -15,7 +15,7 @@ import {
 } from "cesium";
 import { useFireData } from "@/hooks/useFireData";
 import { useGeocore } from "@/store/useGeocore";
-import type { FireEvent } from "@/types";
+import type { FireEvent } from "@/lib/contracts";
 
 // Debounce window for camera-driven fire refetches.
 const MOVE_END_DEBOUNCE_MS = 400;

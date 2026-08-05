@@ -1,3 +1,12 @@
+/**
+ * Shared data contracts.
+ *
+ * This is the only module both the server layer and the client are allowed to
+ * agree on. It holds types and nothing else — no functions, no constants, and
+ * no imports from `server/`, so it can be pulled into a client component
+ * without dragging server code into the browser bundle.
+ */
+
 export interface FireEvent {
   id: string;
   latitude: number;
@@ -49,3 +58,18 @@ export interface ImpactLink {
   stationId: string;
   distance_km: number;
 }
+
+/**
+ * Every route under app/api/** answers with this envelope: `{ data }` on
+ * success, `{ error }` on failure. One shape for both routes so clients can
+ * branch on the presence of `error` without knowing which endpoint they hit.
+ */
+export interface ApiSuccess<T> {
+  data: T;
+}
+
+export interface ApiError {
+  error: string;
+}
+
+export type ApiResponse<T> = ApiSuccess<T> | ApiError;

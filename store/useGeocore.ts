@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AQIStation, FireEvent } from "@/types";
+import type { AQIStation, FireEvent } from "@/lib/contracts";
 
 interface ActiveLayers {
   fires: boolean;

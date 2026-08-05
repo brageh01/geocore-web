@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import type { FireEvent, FireGeoJSON } from "@/types";
+import type { ApiResponse, FireEvent, FireGeoJSON } from "@/lib/contracts";
 import { useGeocore } from "@/store/useGeocore";
 
 interface UseFireDataReturn {
@@ -46,10 +46,11 @@ export function useFireData(): UseFireDataReturn {
       const res = await fetch(url, { signal: controller.signal });
       if (!res.ok) throw new Error(`Failed to fetch fire data: ${res.status}`);
 
-      const geojson: FireGeoJSON = await res.json();
+      const body: ApiResponse<FireGeoJSON> = await res.json();
       if (controller.signal.aborted) return;
+      if ("error" in body) throw new Error(body.error);
 
-      const events: FireEvent[] = geojson.features.map((f) => ({
+      const events: FireEvent[] = body.data.features.map((f) => ({
         id: f.id,
         latitude: f.geometry.coordinates[1],
         longitude: f.geometry.coordinates[0],

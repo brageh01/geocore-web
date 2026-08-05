@@ -8,11 +8,12 @@ import {
   Cartesian3,
   Color,
 } from "cesium";
+import { publicEnv } from "@/lib/publicEnv";
 
 export function configureCesium() {
   (buildModuleUrl as unknown as { setBaseUrl: (url: string) => void }).setBaseUrl("/cesium/");
 
-  const ionToken = process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN;
+  const ionToken = publicEnv.cesiumIonToken;
   if (ionToken) {
     Ion.defaultAccessToken = ionToken;
   }
@@ -39,7 +40,7 @@ export async function initializeViewer(
   });
 
   // Load Google Photorealistic 3D Tiles
-  const googleApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const googleApiKey = publicEnv.googleMapsApiKey;
   if (googleApiKey) {
     try {
       const tileset = await createGooglePhotorealistic3DTileset({ key: googleApiKey });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { AQIStation } from "@/types";
+import type { AQIStation, ApiResponse } from "@/lib/contracts";
 import { useGeocore } from "@/store/useGeocore";
 
 interface UseAQIDataReturn {
@@ -35,8 +35,10 @@ export function useAQIData(): UseAQIDataReturn {
         throw new Error(`Failed to fetch AQI data: ${res.status}`);
       }
 
-      const data: AQIStation[] = await res.json();
-      setAqiStations(data);
+      const body: ApiResponse<AQIStation[]> = await res.json();
+      if ("error" in body) throw new Error(body.error);
+
+      setAqiStations(body.data);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Unknown error");

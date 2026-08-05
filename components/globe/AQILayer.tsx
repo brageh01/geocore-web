@@ -14,7 +14,7 @@ import {
   defined,
 } from "cesium";
 import { useAQIData } from "@/hooks/useAQIData";
-import type { AQIStation } from "@/types";
+import type { AQIStation } from "@/lib/contracts";
 
 const MAX_AQI_ENTITIES = 300;
 
