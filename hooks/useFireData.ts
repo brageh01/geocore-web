@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import type { FireEvent, FireGeoJSON } from "@/types";
+import { useGeocore } from "@/store/useGeocore";
 
 interface UseFireDataReturn {
   fires: FireEvent[];
@@ -21,7 +22,10 @@ interface UseFireDataReturn {
 let inFlightController: AbortController | null = null;
 
 export function useFireData(): UseFireDataReturn {
-  const [fires, setFires] = useState<FireEvent[]>([]);
+  // Fires live in the Zustand store so consumers outside this hook's
+  // component (sidebar, fusion logic) can read the same list.
+  const fires = useGeocore((s) => s.fires);
+  const setFires = useGeocore((s) => s.setFires);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,7 +63,7 @@ export function useFireData(): UseFireDataReturn {
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, []);
+  }, [setFires]);
 
   useEffect(() => {
     return () => {
