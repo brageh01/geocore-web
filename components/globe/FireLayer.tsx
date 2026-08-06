@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Viewer,
   Cartesian2,
@@ -17,12 +17,69 @@ import { useFireData } from "@/hooks/useFireData";
 import { useGeocore } from "@/store/useGeocore";
 import type { FireEvent } from "@/lib/contracts";
 
-// Debounce window for camera-driven fire refetches.
-const MOVE_END_DEBOUNCE_MS = 400;
+// Debounce window for camera-driven fire refetches. A trackpad pinch emits a
+// long burst of camera events; at 400ms an unhurried zoom still slipped
+// several fetches through, so this is the settle time before we consider the
+// camera to have stopped.
+const MOVE_END_DEBOUNCE_MS = 800;
 // When the viewport spans more than this many degrees of longitude, fall back
 // to the global fire set rather than sending an oversized / antimeridian-
 // crossing bbox to FIRMS.
 const MAX_VIEWPORT_LON_SPAN_DEG = 90;
+
+// Viewport edges are snapped outward onto a grid of this size before becoming
+// a request. Without it every pixel of camera movement yields a unique bbox
+// and therefore a fresh FIRMS call — and FIRMS allows 10 requests/minute.
+// Snapping means a whole neighbourhood of similar viewports collapses onto one
+// cache key. Smaller values track the viewport more tightly but fragment the
+// cache and fetch more; larger values over-fetch area you cannot see.
+const BBOX_QUANTIZE_DEG = 5;
+
+// Detections below this fire radiative power (MW) are not drawn. VIIRS flags a
+// large tail of very low-power thermal anomalies — gas flares, industrial
+// heat, small agricultural burns — that cost a point each and add little to a
+// global situational view. Lower this toward 0 to see everything the satellite
+// saw, at the cost of frame time.
+const MIN_RENDER_FRP_MW = 1;
+
+// Hard ceiling on points pushed to the GPU. A global 2-day VIIRS pull is
+// routinely 50k–200k detections, and rebuilding a collection that size on
+// every camera settle is what freezes the UI. When a viewport holds more than
+// this we keep the highest-FRP detections, on the grounds that the largest
+// fires are the ones worth seeing first. Raising it surfaces more of the long
+// tail and costs frame time on every rebuild.
+const MAX_RENDERED_POINTS = 5000;
+
+/**
+ * Snap a bbox outward onto the BBOX_QUANTIZE_DEG grid and format it for FIRMS.
+ * Outward (floor the min edges, ceil the max edges) so the quantized box always
+ * contains the real viewport — never less data than the user can see.
+ */
+function quantizeBbox(
+  west: number,
+  south: number,
+  east: number,
+  north: number
+): string {
+  const q = BBOX_QUANTIZE_DEG;
+  let w = Math.max(-180, Math.floor(west / q) * q);
+  let s = Math.max(-90, Math.floor(south / q) * q);
+  let e = Math.min(180, Math.ceil(east / q) * q);
+  let n = Math.min(90, Math.ceil(north / q) * q);
+
+  // A viewport sitting exactly on a grid line can collapse to zero width or
+  // height, which FIRMS rejects. Widen by one cell, staying inside bounds.
+  if (e <= w) {
+    if (w + q <= 180) e = w + q;
+    else w = e - q;
+  }
+  if (n <= s) {
+    if (s + q <= 90) n = s + q;
+    else s = n - q;
+  }
+
+  return `${w},${s},${e},${n}`;
+}
 
 interface FireLayerProps {
   viewer: Viewer;
@@ -55,7 +112,7 @@ function sizeForFrp(frp: number): number {
 }
 
 export default function FireLayer({ viewer }: FireLayerProps) {
-  const { fires, loadFires } = useFireData();
+  const { fires, error, loadFires } = useFireData();
   const setSelectedFire = useGeocore((s) => s.setSelectedFire);
   const collectionRef = useRef<PointPrimitiveCollection | null>(null);
   const handlerRef = useRef<ScreenSpaceEventHandler | null>(null);
@@ -90,7 +147,10 @@ export default function FireLayer({ viewer }: FireLayerProps) {
       return;
     }
 
-    loadFires(`${west},${south},${east},${north}`);
+    // Quantize before the bbox becomes a request. useFireData keys its cache
+    // on this string, so a camera that settles inside the same grid cell it
+    // was already in resolves from cache without touching the network.
+    loadFires(quantizeBbox(west, south, east, north));
   }, [viewer, loadFires]);
 
   // Attach camera.moveEnd listener (debounced) and fire an initial load.
@@ -130,6 +190,27 @@ export default function FireLayer({ viewer }: FireLayerProps) {
     };
   }, [viewer, loadFiresForViewport]);
 
+  // Thin the raw detection list down to what we are willing to draw. Memoised
+  // on `fires`, and useFireData hands back the same array reference on a cache
+  // hit, so an unchanged dataset produces an unchanged `renderedFires` and the
+  // rebuild effect below does not re-run.
+  const renderedFires = useMemo(() => {
+    const eligible = fires.filter((f) => f.frp >= MIN_RENDER_FRP_MW);
+
+    const capped =
+      eligible.length > MAX_RENDERED_POINTS
+        ? [...eligible]
+            .sort((a, b) => b.frp - a.frp)
+            .slice(0, MAX_RENDERED_POINTS)
+        : eligible;
+
+    console.log(
+      `[FireLayer] ${fires.length} detections → ${eligible.length} at or above ${MIN_RENDER_FRP_MW} MW FRP → ${capped.length} rendered (cap ${MAX_RENDERED_POINTS}, dropped ${fires.length - capped.length})`
+    );
+
+    return capped;
+  }, [fires]);
+
   // Render fire points into a single GPU-batched PointPrimitiveCollection.
   // This is dramatically faster than adding one Entity per fire when there
   // are tens of thousands of points.
@@ -142,7 +223,7 @@ export default function FireLayer({ viewer }: FireLayerProps) {
       collectionRef.current = null;
     }
 
-    if (fires.length === 0) return;
+    if (renderedFires.length === 0) return;
 
     const collection = new PointPrimitiveCollection();
     viewer.scene.primitives.add(collection);
@@ -150,7 +231,7 @@ export default function FireLayer({ viewer }: FireLayerProps) {
 
     const scaleByDistance = new NearFarScalar(1_000_000, 1.0, 20_000_000, 0.3);
 
-    for (const fire of fires) {
+    for (const fire of renderedFires) {
       const pickId: FirePickId = { type: "fire", fire };
       collection.add({
         position: Cartesian3.fromDegrees(fire.longitude, fire.latitude),
@@ -172,7 +253,7 @@ export default function FireLayer({ viewer }: FireLayerProps) {
       }
       collectionRef.current = null;
     };
-  }, [viewer, fires]);
+  }, [viewer, renderedFires]);
 
   // Click picking — scene.pick returns the PointPrimitive; its `id` is our
   // FirePickId, which carries the full FireEvent inline. No fetch, no
@@ -207,5 +288,22 @@ export default function FireLayer({ viewer }: FireLayerProps) {
     };
   }, [viewer, handleClick]);
 
-  return null;
+  // Fire fetch failures used to be computed and thrown away — a FIRMS 429
+  // meant points silently stopped updating with nothing on screen to say so.
+  if (!error) return null;
+
+  const isRateLimited = error.includes("429");
+
+  return (
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none border border-[#FF4500]/60 bg-[#0a0a0a]/90 px-3 py-2">
+      <div className="font-mono text-[10px] font-bold tracking-widest text-[#FF4500] uppercase">
+        Fire Feed Error
+      </div>
+      <div className="font-mono text-[10px] text-[#e5e5e5] mt-1">
+        {isRateLimited
+          ? "FIRMS rate limit reached (10 req/min). Showing last loaded data."
+          : error}
+      </div>
+    </div>
+  );
 }

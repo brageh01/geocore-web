@@ -13,13 +13,40 @@ interface UseFireDataReturn {
    * Pass `undefined` to fetch the global default set.
    * Aborts any in-flight fetch so stale responses can't overwrite fresh ones.
    */
-  loadFires: (bbox?: string) => Promise<void>;
+  loadFires: (bbox?: string, days?: number) => Promise<void>;
 }
+
+// Matches the server-side default in app/api/fires/route.ts. Part of the cache
+// key so a future timeline scrubber can't serve day-2 data for a day-7 request.
+const DEFAULT_DAYS = 2;
+
+// How long a fetched bbox stays usable before we go back to FIRMS. FIRMS
+// allows 10 requests/minute and VIIRS NRT updates on the order of hours, so a
+// 5 minute window costs no freshness worth having and removes almost all
+// repeat traffic from panning back and forth over the same ground.
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CacheEntry {
+  events: FireEvent[];
+  fetchedAt: number;
+}
+
+// Module-scoped so the cache survives FireLayer unmounting (the FIRES toggle)
+// and is shared by every hook instance.
+const fireCache = new Map<string, CacheEntry>();
+
+// The key of the most recent load. Used to skip the store write entirely when
+// the camera settles inside the same quantized cell it was already in.
+let lastRequestedKey: string | null = null;
 
 // Module-scoped abort controller. One in-flight fire fetch across the whole
 // app — every new call aborts the previous one, so rapid camera moves can
 // never stack overlapping requests.
 let inFlightController: AbortController | null = null;
+
+function cacheKey(bbox: string | undefined, days: number): string {
+  return `${bbox ?? "global"}|${days}`;
+}
 
 export function useFireData(): UseFireDataReturn {
   // Fires live in the Zustand store so consumers outside this hook's
@@ -29,42 +56,67 @@ export function useFireData(): UseFireDataReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadFires = useCallback(async (bbox?: string) => {
-    inFlightController?.abort();
-    const controller = new AbortController();
-    inFlightController = controller;
+  const loadFires = useCallback(
+    async (bbox?: string, days: number = DEFAULT_DAYS) => {
+      const key = cacheKey(bbox, days);
+      const cached = fireCache.get(key);
+      const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
 
-    setLoading(true);
-    setError(null);
+      if (isFresh) {
+        // Cache hit — no network. Note we hand back the *same array
+        // reference* that was cached, so downstream memos and effects keyed on
+        // `fires` see an unchanged value and skip their rebuild entirely.
+        if (key !== lastRequestedKey) {
+          lastRequestedKey = key;
+          setFires(cached.events);
+        }
+        setError(null);
+        return;
+      }
 
-    try {
-      const params = new URLSearchParams();
-      if (bbox) params.set("area", bbox);
-      const qs = params.toString();
-      const url = qs ? `/api/fires?${qs}` : "/api/fires";
+      // Cache miss or expired entry. Note failures are never cached, so a
+      // bbox that 429'd is retried the next time the camera settles on it.
+      lastRequestedKey = key;
 
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`Failed to fetch fire data: ${res.status}`);
+      inFlightController?.abort();
+      const controller = new AbortController();
+      inFlightController = controller;
 
-      const body: ApiResponse<FireGeoJSON> = await res.json();
-      if (controller.signal.aborted) return;
-      if ("error" in body) throw new Error(body.error);
+      setLoading(true);
+      setError(null);
 
-      const events: FireEvent[] = body.data.features.map((f) => ({
-        id: f.id,
-        latitude: f.geometry.coordinates[1],
-        longitude: f.geometry.coordinates[0],
-        ...f.properties,
-      }));
+      try {
+        const params = new URLSearchParams();
+        if (bbox) params.set("area", bbox);
+        if (days !== DEFAULT_DAYS) params.set("days", String(days));
+        const qs = params.toString();
+        const url = qs ? `/api/fires?${qs}` : "/api/fires";
 
-      setFires(events);
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      if (!controller.signal.aborted) setLoading(false);
-    }
-  }, [setFires]);
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Failed to fetch fire data: ${res.status}`);
+
+        const body: ApiResponse<FireGeoJSON> = await res.json();
+        if (controller.signal.aborted) return;
+        if ("error" in body) throw new Error(body.error);
+
+        const events: FireEvent[] = body.data.features.map((f) => ({
+          id: f.id,
+          latitude: f.geometry.coordinates[1],
+          longitude: f.geometry.coordinates[0],
+          ...f.properties,
+        }));
+
+        fireCache.set(key, { events, fetchedAt: Date.now() });
+        setFires(events);
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    },
+    [setFires]
+  );
 
   useEffect(() => {
     return () => {
