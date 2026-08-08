@@ -7,6 +7,7 @@ import { useGeocore } from "@/store/useGeocore";
 import { DEMO_MODE } from "@/lib/demo/flag";
 import FireLayer from "./FireLayer";
 import DemoImpactLayer from "./DemoImpactLayer";
+import DemoCameraChoreography from "./DemoCameraChoreography";
 
 export default function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -49,8 +50,9 @@ export default function GlobeViewer() {
       {viewerReady && viewerRef.current && activeLayers.fires && (
         <FireLayer viewer={viewerRef.current} />
       )}
-      {/* Reads the viewer from the store, so it needs no ref access here. */}
+      {/* Both read the viewer from the store, so they need no ref access here. */}
       {DEMO_MODE && activeLayers.aqi && <DemoImpactLayer />}
+      {DEMO_MODE && <DemoCameraChoreography />}
     </div>
   );
 }

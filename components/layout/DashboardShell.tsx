@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useGeocore } from "@/store/useGeocore";
 import EventCard from "@/components/panels/EventCard";
 import ActiveEventsList from "@/components/panels/ActiveEventsList";
+import CameraPresetButtons from "@/components/layout/CameraPresetButtons";
 import { DEMO_MODE } from "@/lib/demo/flag";
 
 const GlobeViewer = dynamic(() => import("@/components/globe/GlobeViewer"), {
@@ -47,19 +48,27 @@ export default function DashboardShell() {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <LayerButton
-            label="FIRES"
-            active={activeLayers.fires}
-            color="#FF4500"
-            onClick={() => toggleLayer("fires")}
-          />
-          <LayerButton
-            label="AQI"
-            active={activeLayers.aqi}
-            color="#00E400"
-            onClick={() => toggleLayer("aqi")}
-          />
+        <div className="flex items-center gap-3">
+          {DEMO_MODE && (
+            <>
+              <CameraPresetButtons />
+              <span className="w-px h-4 bg-[#262626]" />
+            </>
+          )}
+          <div className="flex items-center gap-2">
+            <LayerButton
+              label="FIRES"
+              active={activeLayers.fires}
+              color="#FF4500"
+              onClick={() => toggleLayer("fires")}
+            />
+            <LayerButton
+              label="AQI"
+              active={activeLayers.aqi}
+              color="#00E400"
+              onClick={() => toggleLayer("aqi")}
+            />
+          </div>
         </div>
       </header>
 
