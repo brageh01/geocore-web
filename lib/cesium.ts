@@ -39,14 +39,34 @@ export async function initializeViewer(
     msaaSamples: 4,
   });
 
-  // Load Google Photorealistic 3D Tiles
+  // Load Google Photorealistic 3D Tiles.
+  //
+  // When these load they ARE the planet's surface — real elevation, real
+  // buildings. Leaving Cesium's own globe visible underneath puts two surfaces
+  // in nearly the same place, both writing depth, and the GPU resolves the tie
+  // per-pixel: that is the shimmering "translucent and patchy" look, and it is
+  // z-fighting rather than any translucency setting. So on success we hide the
+  // globe and let the tileset be the surface.
+  //
+  // On failure we must NOT hide it. The key is HTTP-referrer restricted, and a
+  // referrer that is not on the allowlist (localhost, for one) gets a 403 here
+  // — hiding the globe unconditionally would leave a black void with fire
+  // points floating in it. Falling back to the Cesium globe keeps a usable
+  // scene whatever Google says.
   const googleApiKey = publicEnv.googleMapsApiKey;
   if (googleApiKey) {
     try {
       const tileset = await createGooglePhotorealistic3DTileset({ key: googleApiKey });
       viewer.scene.primitives.add(tileset);
+      viewer.scene.globe.show = false;
     } catch (e) {
-      console.error("Failed to load Google 3D Tiles:", e);
+      viewer.scene.globe.show = true;
+      console.error(
+        "Failed to load Google 3D Tiles — falling back to the Cesium globe. " +
+          "A 403 here usually means this origin is not on the API key's HTTP " +
+          "referrer allowlist:",
+        e
+      );
     }
   } else {
     console.warn(

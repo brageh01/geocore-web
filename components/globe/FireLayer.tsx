@@ -82,9 +82,46 @@ function quantizeBbox(
   return `${w},${s},${e},${n}`;
 }
 
-// Last thinning result printed to the console, so the same dataset does not
-// log twice. Module-scoped because React Strict Mode remounts the component.
-let lastLoggedSignature: string | null = null;
+// Metres above the WGS84 ellipsoid at which fire points are drawn.
+//
+// PointPrimitiveCollection has no heightReference, so a point cannot be told to
+// clamp to whatever surface is under it — it gets one fixed altitude. Two
+// failure modes bound the choice:
+//
+//   Too low: Google Photorealistic 3D Tiles carry real elevation, so a point at
+//   height 0 is buried under any ground above sea level. It also sits coplanar
+//   with the surface it is depth-tested against, which at globe scale is inside
+//   the depth buffer's precision epsilon — the test becomes a coin flip and
+//   far-side points bleed through the planet.
+//
+//   Too high: the marker visibly detaches from its terrain, and an oblique
+//   camera shows it parallax-shifted away from the ground it belongs to.
+//
+// 3000 m clears the terrain under essentially all of the fixture's detections
+// (BC interior plateau ~600-1800 m, Iberian ranges ~1000-2000 m, most
+// Californian fires below 2000 m) while staying under ~1.5% of the demo's
+// closest framing altitude, where the parallax is not readable. It is also
+// ~0.05% of Earth's radius, comfortably outside the depth epsilon, so far-side
+// occlusion resolves cleanly.
+const FIRE_POINT_ALTITUDE_M = 3000;
+
+// Point size vs camera distance. The previous ramp bottomed out at 0.3 and
+// stopped growing closer than 1000 km, which made a global view a solid orange
+// smear and a close view no more legible than a mid view. Widening it in both
+// directions: fine speckle from orbit, chunky distinct markers up close.
+const FIRE_POINT_SCALE_NEAR_DISTANCE_M = 200_000;
+const FIRE_POINT_SCALE_NEAR = 1.8;
+const FIRE_POINT_SCALE_FAR_DISTANCE_M = 25_000_000;
+const FIRE_POINT_SCALE_FAR = 0.25;
+
+// Hoisted: one immutable instance shared by every point, rather than a fresh
+// object per collection rebuild.
+const FIRE_POINT_SCALE_BY_DISTANCE = new NearFarScalar(
+  FIRE_POINT_SCALE_NEAR_DISTANCE_M,
+  FIRE_POINT_SCALE_NEAR,
+  FIRE_POINT_SCALE_FAR_DISTANCE_M,
+  FIRE_POINT_SCALE_FAR
+);
 
 interface FireLayerProps {
   viewer: Viewer;
@@ -208,26 +245,33 @@ export default function FireLayer({ viewer }: FireLayerProps) {
   const renderedFires = useMemo(() => {
     const eligible = fires.filter((f) => f.frp >= MIN_RENDER_FRP_MW);
 
-    const capped =
-      eligible.length > MAX_RENDERED_POINTS
-        ? [...eligible]
-            .sort((a, b) => b.frp - a.frp)
-            .slice(0, MAX_RENDERED_POINTS)
-        : eligible;
-
-    // Log once per distinct dataset, not once per memo evaluation — React
-    // Strict Mode double-invokes the memo in dev and would otherwise print
-    // every count twice. The empty initial store isn't a dataset, so skip it.
-    const signature = `${fires.length}|${capped.length}`;
-    if (fires.length > 0 && signature !== lastLoggedSignature) {
-      lastLoggedSignature = signature;
-      console.log(
-        `[FireLayer] ${fires.length} detections → ${eligible.length} at or above ${MIN_RENDER_FRP_MW} MW FRP → ${capped.length} rendered (cap ${MAX_RENDERED_POINTS}, dropped ${fires.length - capped.length})`
-      );
+    if (eligible.length <= MAX_RENDERED_POINTS) {
+      return { eligibleCount: eligible.length, points: eligible };
     }
 
-    return capped;
+    return {
+      eligibleCount: eligible.length,
+      points: [...eligible]
+        .sort((a, b) => b.frp - a.frp)
+        .slice(0, MAX_RENDERED_POINTS),
+    };
   }, [fires]);
+
+  // Report the thinning once per dataset. This lives in an effect rather than
+  // inside the memo above: a memo must stay pure, and Strict Mode double-
+  // invokes it in dev, which printed every count twice. The ref makes the log
+  // idempotent across that double invocation.
+  const loggedSignatureRef = useRef<string | null>(null);
+  useEffect(() => {
+    const { eligibleCount, points } = renderedFires;
+    if (fires.length === 0) return; // the empty initial store isn't a dataset
+    const signature = `${fires.length}|${points.length}`;
+    if (signature === loggedSignatureRef.current) return;
+    loggedSignatureRef.current = signature;
+    console.log(
+      `[FireLayer] ${fires.length} detections → ${eligibleCount} at or above ${MIN_RENDER_FRP_MW} MW FRP → ${points.length} rendered (cap ${MAX_RENDERED_POINTS}, dropped ${fires.length - points.length})`
+    );
+  }, [fires.length, renderedFires]);
 
   // Render fire points into a single GPU-batched PointPrimitiveCollection.
   // This is dramatically faster than adding one Entity per fire when there
@@ -241,25 +285,29 @@ export default function FireLayer({ viewer }: FireLayerProps) {
       collectionRef.current = null;
     }
 
-    if (renderedFires.length === 0) return;
+    if (renderedFires.points.length === 0) return;
 
     const collection = new PointPrimitiveCollection();
     viewer.scene.primitives.add(collection);
     collectionRef.current = collection;
 
-    const scaleByDistance = new NearFarScalar(1_000_000, 1.0, 20_000_000, 0.3);
-
-    for (const fire of renderedFires) {
+    for (const fire of renderedFires.points) {
       const pickId: FirePickId = { type: "fire", fire };
       collection.add({
-        position: Cartesian3.fromDegrees(fire.longitude, fire.latitude),
+        position: Cartesian3.fromDegrees(
+          fire.longitude,
+          fire.latitude,
+          FIRE_POINT_ALTITUDE_M
+        ),
         color: colorForFrp(fire.frp),
         pixelSize: sizeForFrp(fire.frp),
         outlineColor: Color.fromCssColorString("#FFD6A0"),
         outlineWidth: 1,
-        scaleByDistance,
-        // Depth-test against terrain (set globally on the globe) so fires
-        // on the far side of the earth are hidden behind it.
+        scaleByDistance: FIRE_POINT_SCALE_BY_DISTANCE,
+        // 0 keeps the depth test on at every distance, so whichever surface is
+        // active — the 3D tileset or the fallback globe — hides points on the
+        // far side of the planet. This only resolves correctly because the
+        // points are lifted off the ellipsoid; see FIRE_POINT_ALTITUDE_M.
         disableDepthTestDistance: 0,
         id: pickId,
       });
