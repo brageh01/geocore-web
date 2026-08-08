@@ -103,7 +103,7 @@ function quantizeBbox(
 // closest framing altitude, where the parallax is not readable. It is also
 // ~0.05% of Earth's radius, comfortably outside the depth epsilon, so far-side
 // occlusion resolves cleanly.
-const FIRE_POINT_ALTITUDE_M = 3000;
+export const FIRE_POINT_ALTITUDE_M = 3000;
 
 // Point size vs camera distance. The previous ramp bottomed out at 0.3 and
 // stopped growing closer than 1000 km, which made a global view a solid orange

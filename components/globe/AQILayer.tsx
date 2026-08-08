@@ -15,33 +15,12 @@ import {
 } from "cesium";
 import { useAQIData } from "@/hooks/useAQIData";
 import type { AQIStation } from "@/lib/contracts";
+import { aqiToColor } from "@/lib/aqiScale";
 
 const MAX_AQI_ENTITIES = 300;
 
 interface AQILayerProps {
   viewer: Viewer;
-}
-
-/**
- * EPA AQI color scale.
- * https://www.airnow.gov/aqi/aqi-basics/
- */
-function aqiToColor(aqi: number): string {
-  if (aqi <= 50) return "#00E400";     // Good — green
-  if (aqi <= 100) return "#FFFF00";    // Moderate — yellow
-  if (aqi <= 150) return "#FF7E00";    // Unhealthy for Sensitive — orange
-  if (aqi <= 200) return "#FF0000";    // Unhealthy — red
-  if (aqi <= 300) return "#8F3F97";    // Very Unhealthy — purple
-  return "#7E0023";                     // Hazardous — maroon
-}
-
-function aqiCategory(aqi: number): string {
-  if (aqi <= 50) return "Good";
-  if (aqi <= 100) return "Moderate";
-  if (aqi <= 150) return "USG";
-  if (aqi <= 200) return "Unhealthy";
-  if (aqi <= 300) return "Very Unhealthy";
-  return "Hazardous";
 }
 
 function getCameraHeight(viewer: Viewer): number {

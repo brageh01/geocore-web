@@ -3,6 +3,8 @@
 import dynamic from "next/dynamic";
 import { useGeocore } from "@/store/useGeocore";
 import EventCard from "@/components/panels/EventCard";
+import ActiveEventsList from "@/components/panels/ActiveEventsList";
+import { DEMO_MODE } from "@/lib/demo/flag";
 
 const GlobeViewer = dynamic(() => import("@/components/globe/GlobeViewer"), {
   ssr: false,
@@ -31,6 +33,18 @@ export default function DashboardShell() {
           <span className="text-[#737373] text-xs font-mono">
             Global Disaster Intelligence
           </span>
+          {/* Persistent provenance notice. The AQI numbers on screen are
+              fabricated, and nothing in a recording should be able to be
+              mistaken for a measurement. */}
+          {DEMO_MODE && (
+            <span
+              className="font-mono text-[9px] tracking-widest uppercase px-1.5 py-0.5 border"
+              style={{ color: "#A16207", borderColor: "#A1620755" }}
+              title="AQI stations and impact links in this view are generated, not measured."
+            >
+              Simulated AQI Data
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -57,9 +71,13 @@ export default function DashboardShell() {
             <h2 className="font-mono text-[10px] font-bold tracking-widest text-[#737373] uppercase mb-3">
               Active Events
             </h2>
-            <p className="text-xs text-[#737373] font-mono">
-              Select a fire marker on the globe to view details.
-            </p>
+            {DEMO_MODE ? (
+              <ActiveEventsList />
+            ) : (
+              <p className="text-xs text-[#737373] font-mono">
+                Select a fire marker on the globe to view details.
+              </p>
+            )}
           </div>
         </aside>
 

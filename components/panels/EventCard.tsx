@@ -1,12 +1,18 @@
 "use client";
 
 import { useGeocore } from "@/store/useGeocore";
+import { DEMO_MODE } from "@/lib/demo/flag";
+import ImpactBriefing from "./ImpactBriefing";
 
 export default function EventCard() {
   const fire = useGeocore((s) => s.selectedFire);
   const setSelectedFire = useGeocore((s) => s.setSelectedFire);
 
   if (!fire) return null;
+
+  // Demo mode swaps the raw VIIRS field list below for a briefing. The rows
+  // stay exactly as they were for the live path.
+  if (DEMO_MODE) return <ImpactBriefing fire={fire} />;
 
   const lonLabel =
     fire.longitude >= 0

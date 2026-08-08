@@ -2,6 +2,7 @@ import "server-only";
 import { serverConfig } from "@/server/config";
 import { UpstreamError } from "@/server/errors";
 import type { AQIStation } from "@/lib/contracts";
+import { pm25ToAQI } from "@/lib/aqiScale";
 
 /**
  * OpenAQ air-quality source.
@@ -116,33 +117,4 @@ export function parseOpenAQResponse(data: {
   }
 
   return stations;
-}
-
-/**
- * Convert PM2.5 concentration (µg/m³) to AQI using EPA breakpoints.
- * https://www.airnow.gov/aqi/aqi-basics/
- */
-export function pm25ToAQI(pm25: number): number {
-  const breakpoints: [number, number, number, number][] = [
-    // [pm25_low, pm25_high, aqi_low, aqi_high]
-    [0.0, 9.0, 0, 50],
-    [9.1, 35.4, 51, 100],
-    [35.5, 55.4, 101, 150],
-    [55.5, 125.4, 151, 200],
-    [125.5, 225.4, 201, 300],
-    [225.5, 325.4, 301, 500],
-  ];
-
-  if (pm25 < 0) return 0;
-  if (pm25 > 325.4) return 500;
-
-  for (const [cLow, cHigh, iLow, iHigh] of breakpoints) {
-    if (pm25 >= cLow && pm25 <= cHigh) {
-      return Math.round(
-        ((iHigh - iLow) / (cHigh - cLow)) * (pm25 - cLow) + iLow
-      );
-    }
-  }
-
-  return 0;
 }
