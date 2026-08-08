@@ -16,6 +16,7 @@ import {
 import { useFireData } from "@/hooks/useFireData";
 import { useGeocore } from "@/store/useGeocore";
 import type { FireEvent } from "@/lib/contracts";
+import { DEMO_MODE } from "@/lib/demo/flag";
 
 // Debounce window for camera-driven fire refetches. A trackpad pinch emits a
 // long burst of camera events; at 400ms an unhurried zoom still slipped
@@ -48,7 +49,7 @@ const MIN_RENDER_FRP_MW = 1;
 // this we keep the highest-FRP detections, on the grounds that the largest
 // fires are the ones worth seeing first. Raising it surfaces more of the long
 // tail and costs frame time on every rebuild.
-const MAX_RENDERED_POINTS = 5000;
+const MAX_RENDERED_POINTS = 3000;
 
 /**
  * Snap a bbox outward onto the BBOX_QUANTIZE_DEG grid and format it for FIRMS.
@@ -80,6 +81,10 @@ function quantizeBbox(
 
   return `${w},${s},${e},${n}`;
 }
+
+// Last thinning result printed to the console, so the same dataset does not
+// log twice. Module-scoped because React Strict Mode remounts the component.
+let lastLoggedSignature: string | null = null;
 
 interface FireLayerProps {
   viewer: Viewer;
@@ -156,6 +161,12 @@ export default function FireLayer({ viewer }: FireLayerProps) {
   // Attach camera.moveEnd listener (debounced) and fire an initial load.
   useEffect(() => {
     if (!viewer || viewer.isDestroyed()) return;
+    // Demo mode: the fixture is already in the store and nothing the camera
+    // does should change it. Never attach the listener at all — a debounce
+    // that resolves to a no-op still costs a timer and a viewport computation
+    // on every settle, and the point of demo mode is that panning does zero
+    // work beyond drawing.
+    if (DEMO_MODE) return;
 
     const onMoveEnd = () => {
       if (debounceRef.current !== null) {
@@ -204,9 +215,16 @@ export default function FireLayer({ viewer }: FireLayerProps) {
             .slice(0, MAX_RENDERED_POINTS)
         : eligible;
 
-    console.log(
-      `[FireLayer] ${fires.length} detections → ${eligible.length} at or above ${MIN_RENDER_FRP_MW} MW FRP → ${capped.length} rendered (cap ${MAX_RENDERED_POINTS}, dropped ${fires.length - capped.length})`
-    );
+    // Log once per distinct dataset, not once per memo evaluation — React
+    // Strict Mode double-invokes the memo in dev and would otherwise print
+    // every count twice. The empty initial store isn't a dataset, so skip it.
+    const signature = `${fires.length}|${capped.length}`;
+    if (fires.length > 0 && signature !== lastLoggedSignature) {
+      lastLoggedSignature = signature;
+      console.log(
+        `[FireLayer] ${fires.length} detections → ${eligible.length} at or above ${MIN_RENDER_FRP_MW} MW FRP → ${capped.length} rendered (cap ${MAX_RENDERED_POINTS}, dropped ${fires.length - capped.length})`
+      );
+    }
 
     return capped;
   }, [fires]);

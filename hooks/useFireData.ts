@@ -3,6 +3,8 @@
 import { useState, useCallback, useEffect } from "react";
 import type { ApiResponse, FireEvent, FireGeoJSON } from "@/lib/contracts";
 import { useGeocore } from "@/store/useGeocore";
+import { DEMO_MODE } from "@/lib/demo/flag";
+import { DEMO_FIRES } from "@/lib/demo/fires";
 
 interface UseFireDataReturn {
   fires: FireEvent[];
@@ -48,6 +50,12 @@ function cacheKey(bbox: string | undefined, days: number): string {
   return `${bbox ?? "global"}|${days}`;
 }
 
+// Demo mode: a no-op standing in for `loadFires`. Hoisted to module scope so
+// its identity is stable forever — `loadFiresForViewport` in FireLayer is a
+// useCallback keyed on it, and a fresh closure per render would re-run the
+// effect that owns the camera listener.
+const noopLoadFires = async () => {};
+
 export function useFireData(): UseFireDataReturn {
   // Fires live in the Zustand store so consumers outside this hook's
   // component (sidebar, fusion logic) can read the same list.
@@ -55,6 +63,16 @@ export function useFireData(): UseFireDataReturn {
   const setFires = useGeocore((s) => s.setFires);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Demo mode: seed the store from the frozen fixture exactly once, then never
+  // touch the network again. No debounce, no cache, no requests — `loadFires`
+  // is a no-op, so the camera cannot provoke a fetch no matter how the caller
+  // behaves. Guarded on `fires.length` rather than a mount-once ref so React
+  // Strict Mode's double effect invocation doesn't matter.
+  useEffect(() => {
+    if (!DEMO_MODE) return;
+    if (fires.length === 0) setFires(DEMO_FIRES);
+  }, [fires.length, setFires]);
 
   const loadFires = useCallback(
     async (bbox?: string, days: number = DEFAULT_DAYS) => {
@@ -124,6 +142,10 @@ export function useFireData(): UseFireDataReturn {
       inFlightController = null;
     };
   }, []);
+
+  if (DEMO_MODE) {
+    return { fires, loading: false, error: null, loadFires: noopLoadFires };
+  }
 
   return { fires, loading, error, loadFires };
 }
