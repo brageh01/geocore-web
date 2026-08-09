@@ -18,8 +18,8 @@ import {
   SELECTION_RANGE_PADDING,
   beginScriptedFlight,
   endScriptedFlight,
-  markCameraInteraction,
-  shouldIdleRotate,
+  stopAttractMode,
+  shouldAttractRotate,
 } from "@/lib/demo/cameraPresets";
 
 /**
@@ -44,14 +44,12 @@ export default function DemoCameraChoreography() {
       "keydown",
     ] as const;
 
-    // A drag emits exactly one pointerdown and then only pointermove until
-    // release, so the discrete list above is not enough: measured, the idle
-    // clock expired ~3s into a held drag and the globe started turning under
-    // the user's cursor. Movement *with a button held* re-arms it; movement
-    // with no button does not, so simply resting the cursor over the globe
-    // while watching still lets it rotate.
+    // A drag emits one pointerdown and then only pointermove until release, so
+    // movement with a button held counts as interaction too. Movement with no
+    // button does not: resting the cursor over the globe while watching the
+    // attract loop should not end it.
     const markIfDragging = (event: Event) => {
-      if ((event as PointerEvent).buttons) markCameraInteraction();
+      if ((event as PointerEvent).buttons) stopAttractMode();
     };
 
     // Listen on window in the CAPTURE phase, not on the canvas.
@@ -59,16 +57,16 @@ export default function DemoCameraChoreography() {
     // Cesium's own ScreenSpaceEventHandler binds to the canvas first and stops
     // pointerdown from reaching listeners registered after it — measured:
     // a canvas-level pointerdown listener added here never fires, while wheel
-    // does. Bound that way, dragging the globe would not have interrupted the
-    // idle rotation and the two would fight each other. Capturing on window
-    // runs before anything on the canvas, so nothing downstream can swallow it.
+    // does. Bound that way, dragging the globe would not have ended attract
+    // mode and the two would fight each other. Capturing on window runs before
+    // anything on the canvas, so nothing downstream can swallow it.
     //
     // The wider scope is also the behaviour we want: clicking the sidebar or
     // the top bar is the user engaging with the app, and the globe should stop
     // turning under them for that too.
     const options = { capture: true, passive: true } as const;
     for (const name of interactionEvents) {
-      window.addEventListener(name, markCameraInteraction, options);
+      window.addEventListener(name, stopAttractMode, options);
     }
     window.addEventListener("pointermove", markIfDragging, options);
 
@@ -78,7 +76,7 @@ export default function DemoCameraChoreography() {
     let lastTick: number | null = null;
 
     const onPreRender = () => {
-      if (!shouldIdleRotate()) {
+      if (!shouldAttractRotate()) {
         lastTick = null;
         return;
       }
@@ -98,15 +96,13 @@ export default function DemoCameraChoreography() {
       );
     };
 
+    // No priming call here: attract mode is active from load, so the globe is
+    // already turning by the time the first frame renders.
     viewer.scene.preRender.addEventListener(onPreRender);
-
-    // Start the clock now, so the globe waits the full idle delay after load
-    // rather than beginning to turn immediately.
-    markCameraInteraction();
 
     return () => {
       for (const name of interactionEvents) {
-        window.removeEventListener(name, markCameraInteraction, options);
+        window.removeEventListener(name, stopAttractMode, options);
       }
       window.removeEventListener("pointermove", markIfDragging, options);
       if (!viewer.isDestroyed()) {

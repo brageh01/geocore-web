@@ -69,47 +69,56 @@ export const SELECTION_HEADING_DEG = 0;
  *  past the bounding sphere that encloses the fire and every station. */
 export const SELECTION_RANGE_PADDING = 2.6;
 
-/** Idle before the globe starts turning again. */
-export const IDLE_DELAY_MS = 3000;
-
 /** One full revolution per minute. */
 export const ROTATION_PERIOD_SECONDS = 60;
 export const ROTATION_RAD_PER_SECOND = (2 * Math.PI) / ROTATION_PERIOD_SECONDS;
 
-// --- interaction clock ------------------------------------------------------
+// --- attract mode -----------------------------------------------------------
+//
+// Rotation is an attract loop, not an idle timer. It turns the globe from page
+// load, and the first thing the user does — zoom, drag, fire click, preset —
+// ends it for the session. It never comes back on its own.
+//
+// The previous idle-timer model restarted a few seconds after every
+// interaction, which meant the camera crept away from whatever the user had
+// just framed, including sweeping straight off a fire they had selected. An
+// attract loop only has to survive until someone touches it, and after that
+// silence is the correct behaviour. RESET VIEW is the one way back.
 
-let lastInteractionAt = 0;
+let attractModeActive = true;
 let flightsInProgress = 0;
 
-/** Called on any user input, and at the start/end of a scripted flight. */
-export function markCameraInteraction(): void {
-  lastInteractionAt =
-    typeof performance !== "undefined" ? performance.now() : Date.now();
+/** Ends attract mode for the session. Idempotent; called on any user input. */
+export function stopAttractMode(): void {
+  attractModeActive = false;
 }
 
-export function msSinceInteraction(): number {
-  const now =
-    typeof performance !== "undefined" ? performance.now() : Date.now();
-  return now - lastInteractionAt;
+/** Restarts attract mode. Only RESET VIEW should call this. */
+export function startAttractMode(): void {
+  attractModeActive = true;
+}
+
+export function isAttractModeActive(): boolean {
+  return attractModeActive;
 }
 
 export function beginScriptedFlight(): void {
   flightsInProgress += 1;
-  markCameraInteraction();
 }
 
 export function endScriptedFlight(): void {
   flightsInProgress = Math.max(0, flightsInProgress - 1);
-  // Restart the idle countdown from touchdown rather than from the click, so
-  // the globe does not begin turning half a second after it lands.
-  markCameraInteraction();
 }
 
 export function isFlightInProgress(): boolean {
   return flightsInProgress > 0;
 }
 
-/** True when the globe should be turning on its own. */
-export function shouldIdleRotate(): boolean {
-  return !isFlightInProgress() && msSinceInteraction() >= IDLE_DELAY_MS;
+/**
+ * True when the globe should be turning on its own. A scripted flight suspends
+ * it so the two are never driving the camera in the same frame — RESET VIEW
+ * re-enables attract mode on touchdown, not on click.
+ */
+export function shouldAttractRotate(): boolean {
+  return attractModeActive && !isFlightInProgress();
 }

@@ -9,6 +9,7 @@ import {
   Color,
 } from "cesium";
 import { publicEnv } from "@/lib/publicEnv";
+import { DEFAULT_CAMERA } from "@/lib/cameraDefaults";
 
 export function configureCesium() {
   (buildModuleUrl as unknown as { setBaseUrl: (url: string) => void }).setBaseUrl("/cesium/");
@@ -52,13 +53,17 @@ export function createViewer(container: HTMLElement): Viewer {
     msaaSamples: 4,
   });
 
-  // Default camera: continental US overview (~35°N 100°W, 8000km altitude)
+  // Opening view — see lib/cameraDefaults.ts for why it sits over the Atlantic.
   viewer.camera.setView({
-    destination: Cartesian3.fromDegrees(-100, 35, 8_000_000),
+    destination: Cartesian3.fromDegrees(
+      DEFAULT_CAMERA.longitude,
+      DEFAULT_CAMERA.latitude,
+      DEFAULT_CAMERA.height
+    ),
     orientation: {
-      heading: 0,
-      pitch: CesiumMath.toRadians(-90),
-      roll: 0,
+      heading: CesiumMath.toRadians(DEFAULT_CAMERA.headingDeg),
+      pitch: CesiumMath.toRadians(DEFAULT_CAMERA.pitchDeg),
+      roll: CesiumMath.toRadians(DEFAULT_CAMERA.rollDeg),
     },
   });
 
