@@ -11,6 +11,7 @@
  * front, which is the thing that looks good on camera.
  */
 import type { FireEvent } from "@/lib/contracts";
+import { regionNameFor } from "@/lib/demo/regions";
 
 /** Detections within this distance of a cluster's seed join it. */
 const CLUSTER_RADIUS_KM = 5;
@@ -43,43 +44,6 @@ export interface FireCluster {
   label: string;
 }
 
-/**
- * Named regions, tested in order, first match wins.
- *
- * Deliberately finer than the three fixture bboxes. The fixture's "British
- * Columbia" box starts at 48N, which puts the largest fires in the whole
- * dataset — the 1603 MW cluster at 48.03N — inside it, but they are in
- * Washington state. The 49th parallel is the actual border, so splitting there
- * gives labels that are true rather than merely convenient.
- */
-const NAMED_REGIONS: {
-  name: string;
-  minLat: number;
-  maxLat: number;
-  minLon: number;
-  maxLon: number;
-}[] = [
-  { name: "Washington", minLat: 45.5, maxLat: 49.0, minLon: -125, maxLon: -116 },
-  { name: "Oregon", minLat: 42.0, maxLat: 45.5, minLon: -125, maxLon: -116 },
-  { name: "British Columbia", minLat: 49.0, maxLat: 60.0, minLon: -139, maxLon: -114 },
-  { name: "California", minLat: 32.0, maxLat: 42.0, minLon: -125, maxLon: -114 },
-  { name: "Iberia", minLat: 36.0, maxLat: 44.0, minLon: -10, maxLon: 4 },
-];
-
-function regionNameFor(fire: FireEvent): string {
-  for (const region of NAMED_REGIONS) {
-    if (
-      fire.latitude >= region.minLat &&
-      fire.latitude < region.maxLat &&
-      fire.longitude >= region.minLon &&
-      fire.longitude <= region.maxLon
-    ) {
-      return region.name;
-    }
-  }
-  return "Unclassified";
-}
-
 function haversineKm(a: FireEvent, b: FireEvent): number {
   const toRad = (d: number) => (d * Math.PI) / 180;
   const dLat = toRad(b.latitude - a.latitude);
@@ -99,17 +63,19 @@ interface MutableCluster {
 }
 
 /**
- * Cluster detections and return the largest events, strongest first.
+ * Cluster every detection and return all events, strongest first.
  *
  * Ranked and labelled by the seed's FRP rather than by the cluster total: the
  * briefing panel derives everything from the seed detection, and a list that
  * said 4200 MW next to a panel that said 1603 MW would just look broken on
  * camera. detectionCount is surfaced instead, so the grouping stays visible.
+ *
+ * Returns the full set rather than a top slice, and numbers labels across the
+ * whole set, so a cluster's name does not change depending on how many rows
+ * happen to be on screen. A fire selected from the globe can sit far down this
+ * list and still carry the same label the list would have given it.
  */
-export function clusterFireEvents(
-  fires: FireEvent[],
-  maxEntries: number
-): FireCluster[] {
+export function clusterFireEvents(fires: FireEvent[]): FireCluster[] {
   // Strongest first, so each cluster is seeded by its most intense detection.
   const sorted = [...fires].sort((a, b) => b.frp - a.frp);
 
@@ -150,11 +116,12 @@ export function clusterFireEvents(
   }
 
   // Seeds were taken in FRP order, so `clusters` is already ranked.
-  const top = clusters.slice(0, maxEntries);
-
   const perRegionCount = new Map<string, number>();
-  return top.map((cluster) => {
-    const regionName = regionNameFor(cluster.seed);
+  return clusters.map((cluster) => {
+    const regionName = regionNameFor(
+      cluster.seed.latitude,
+      cluster.seed.longitude
+    );
     const ordinal = (perRegionCount.get(regionName) ?? 0) + 1;
     perRegionCount.set(regionName, ordinal);
 
@@ -168,4 +135,32 @@ export function clusterFireEvents(
       label: `${regionName} Complex ${ordinal}`,
     };
   });
+}
+
+/**
+ * The cluster a given detection belongs to, or null.
+ *
+ * Needed because a fire can be selected by clicking a point on the globe, which
+ * is usually *not* the cluster's seed — matching the list highlight on seed id
+ * alone left the sidebar showing nothing selected while the panel was full.
+ * Every member of a cluster is within CLUSTER_RADIUS_KM of its seed by
+ * construction, so the nearest seed inside that radius is the right answer.
+ */
+export function findClusterForFire(
+  clusters: FireCluster[],
+  fire: FireEvent
+): FireCluster | null {
+  let best: FireCluster | null = null;
+  let bestDistance = Infinity;
+
+  for (const cluster of clusters) {
+    if (cluster.seed.id === fire.id) return cluster;
+    const distance = haversineKm(fire, cluster.seed);
+    if (distance <= CLUSTER_RADIUS_KM && distance < bestDistance) {
+      bestDistance = distance;
+      best = cluster;
+    }
+  }
+
+  return best;
 }

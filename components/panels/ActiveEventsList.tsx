@@ -3,7 +3,11 @@
 import { useMemo } from "react";
 import { useGeocore } from "@/store/useGeocore";
 import { getDemoImpact } from "@/lib/demo/fakeAQI";
-import { clusterFireEvents, type FireCluster } from "@/lib/demo/fireClusters";
+import {
+  clusterFireEvents,
+  findClusterForFire,
+  type FireCluster,
+} from "@/lib/demo/fireClusters";
 
 /**
  * The ACTIVE EVENTS panel in demo mode.
@@ -35,10 +39,27 @@ export default function ActiveEventsList() {
 
   // Clustering 10k detections takes ~20ms, and `fires` is a stable reference in
   // demo mode, so this runs once for the session.
-  const events = useMemo(
-    () => clusterFireEvents(fires, MAX_LISTED_EVENTS),
-    [fires]
+  const allEvents = useMemo(() => clusterFireEvents(fires), [fires]);
+
+  // Which cluster the selection belongs to — matched by proximity, not by seed
+  // id, because clicking a point on the globe usually picks a member detection
+  // rather than the seed.
+  const selectedCluster = useMemo(
+    () => (selectedFire ? findClusterForFire(allEvents, selectedFire) : null),
+    [allEvents, selectedFire]
   );
+
+  const events = useMemo(() => {
+    const top = allEvents.slice(0, MAX_LISTED_EVENTS);
+    // A fire selected on the globe is often nowhere near the top by FRP — the
+    // Nevada fire reached from the California preset sits far down the ranking.
+    // Leaving the list unchanged made it look like the selection had no entry
+    // at all, so append it rather than let it go unrepresented.
+    if (selectedCluster && !top.some((c) => c.id === selectedCluster.id)) {
+      return [...top, selectedCluster];
+    }
+    return top;
+  }, [allEvents, selectedCluster]);
 
   if (events.length === 0) {
     return (
@@ -48,11 +69,12 @@ export default function ActiveEventsList() {
 
   return (
     <div className="space-y-0.5">
-      {events.map((event) => (
+      {events.map((event, index) => (
         <EventRow
           key={event.id}
           event={event}
-          selected={selectedFire?.id === event.seed.id}
+          selected={selectedCluster?.id === event.id}
+          outsideTopList={index >= MAX_LISTED_EVENTS}
           onSelect={() => setSelectedFire(event.seed)}
         />
       ))}
@@ -63,10 +85,12 @@ export default function ActiveEventsList() {
 function EventRow({
   event,
   selected,
+  outsideTopList,
   onSelect,
 }: {
   event: FireCluster;
   selected: boolean;
+  outsideTopList: boolean;
   onSelect: () => void;
 }) {
   const color = cssColorForFrp(event.maxFrp);
@@ -81,8 +105,16 @@ function EventRow({
       style={{
         borderColor: selected ? color : "transparent",
         backgroundColor: selected ? "#1a1a1a" : "transparent",
+        // Separate an appended selection from the ranked list above it.
+        borderTop: outsideTopList ? "1px solid #262626" : undefined,
+        marginTop: outsideTopList ? "0.5rem" : undefined,
       }}
     >
+      {outsideTopList && (
+        <div className="font-mono text-[8px] tracking-widest uppercase text-[#525252] mb-1">
+          Selected · outside top {MAX_LISTED_EVENTS}
+        </div>
+      )}
       {/* The name gets the full row width — "British Columbia Complex 7" does
           not fit beside a value in a 256px column, and a truncated label is the
           one thing this list existed to fix. The multiplier moves down beside

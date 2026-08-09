@@ -37,6 +37,17 @@ const PLUME_INTENSITY = 12.3;
 // dashboard, and the EPA scale tops out at 325.4 µg/m³ anyway.
 const MAX_PM25_UGM3 = 400;
 
+// Concentration and fire radiative power are unrelated quantities that happen
+// to share a numeric range, so the two can coincide by chance — measured, 2 of
+// the fixture's 10,277 fires produced a worst-station PM2.5 that printed
+// identically to the fire's FRP, and a panel reading "87.6 MW" above
+// "87.6 µg/m³" reads as a bug whether or not it is one. Any station landing
+// within this many µg/m³ of the FRP figure is nudged clear.
+const FRP_COLLISION_WINDOW = 1.0;
+// Size of the nudge, as a fraction. Sits inside the existing ±12% jitter band,
+// so it cannot push a reading outside what the model would already produce.
+const FRP_COLLISION_NUDGE = 0.08;
+
 // The plume is a cone, not a scatter: near stations sit close to the downwind
 // bearing, far ones spread out.
 const CONE_HALF_ANGLE_NEAR_DEG = 8;
@@ -212,7 +223,8 @@ export function getDemoImpact(fire: FireEvent): DemoImpact {
         PLUME_INTENSITY * Math.sqrt(Math.max(fire.frp, 1)) * decay * jitter
     );
 
-    const rounded = Math.round(pm25 * 10) / 10;
+    const rounded =
+      Math.round(avoidFrpCollision(pm25, fire.frp) * 10) / 10;
 
     stations.push({
       id: `demo-aqi-${fire.id}-${i}`,
@@ -251,6 +263,30 @@ export function getDemoImpact(fire: FireEvent): DemoImpact {
   impactCache.set(fire.id, impact);
 
   return impact;
+}
+
+/**
+ * Move a concentration clear of the fire's FRP figure.
+ *
+ * Purely a presentation guard: PM2.5 stays a function of FRP and distance, and
+ * the shift is smaller than the model's own jitter. It only ever fires for the
+ * handful of readings that would otherwise print the same number as the FRP
+ * shown directly above them in the panel.
+ */
+function avoidFrpCollision(pm25: number, frp: number): number {
+  if (Math.abs(pm25 - frp) >= FRP_COLLISION_WINDOW) return pm25;
+
+  // Push away from the FRP rather than toward it, so the nudge never carries
+  // the value across and collides again on the other side.
+  const nudged =
+    pm25 >= frp
+      ? pm25 * (1 + FRP_COLLISION_NUDGE)
+      : pm25 * (1 - FRP_COLLISION_NUDGE);
+
+  const clamped = Math.min(MAX_PM25_UGM3, Math.max(BASELINE_PM25_UGM3, nudged));
+
+  // Clamping at either end could in principle land back on the FRP figure.
+  return Math.abs(clamped - frp) < 0.1 ? clamped + 0.2 : clamped;
 }
 
 /** FIRMS reports acquisition time as an unpadded HHMM string ("934" = 09:34). */
