@@ -3,8 +3,10 @@
 import { useMemo } from "react";
 import { useGeocore } from "@/store/useGeocore";
 import { getDemoImpact } from "@/lib/demo/fakeAQI";
+import { aqiToTextColor } from "@/lib/aqiScale";
+import TechnicalDataToggle from "@/components/panels/TechnicalDataToggle";
 import {
-  clusterFireEvents,
+  clusterFireEventsCached,
   findClusterForFire,
   type FireCluster,
 } from "@/lib/demo/fireClusters";
@@ -20,6 +22,25 @@ import {
  */
 
 const MAX_LISTED_EVENTS = 10;
+
+/**
+ * Fire radiative power, in words.
+ *
+ * FRP is the radiative output of a single ~375 m VIIRS pixel, so the numbers
+ * are much smaller than a whole fire's energy and "1603 MW" tells a layperson
+ * nothing. Most detections in a normal scene sit under 10 MW; anything over
+ * 100 MW is a genuinely intense pixel and four figures is exceptional — the
+ * fixture's largest is 1603 MW. Thresholds are set to spread the top of the
+ * list across more than one word rather than to match any published standard,
+ * of which there is none for per-pixel FRP.
+ */
+function intensityLabel(frp: number): string {
+  if (frp >= 1000) return "Extreme";
+  if (frp >= 300) return "Major";
+  if (frp >= 100) return "Significant";
+  if (frp >= 25) return "Moderate";
+  return "Minor";
+}
 
 // Mirrors the FRP ramp in FireLayer. Duplicated rather than imported because
 // FireLayer pulls in Cesium at module scope, and this panel is rendered outside
@@ -39,7 +60,7 @@ export default function ActiveEventsList() {
 
   // Clustering 10k detections takes ~20ms, and `fires` is a stable reference in
   // demo mode, so this runs once for the session.
-  const allEvents = useMemo(() => clusterFireEvents(fires), [fires]);
+  const allEvents = useMemo(() => clusterFireEventsCached(fires), [fires]);
 
   // Which cluster the selection belongs to — matched by proximity, not by seed
   // id, because clicking a point on the globe usually picks a member detection
@@ -68,16 +89,30 @@ export default function ActiveEventsList() {
   }
 
   return (
-    <div className="space-y-0.5">
-      {events.map((event, index) => (
-        <EventRow
-          key={event.id}
-          event={event}
-          selected={selectedCluster?.id === event.id}
-          outsideTopList={index >= MAX_LISTED_EVENTS}
-          onSelect={() => setSelectedFire(event.seed)}
-        />
-      ))}
+    <div>
+      {/* Says what the list is before the first row, since "ACTIVE EVENTS"
+          alone does not explain what an event is or how they are ordered.
+          Wording is "fire intensity", not "air quality impact": the ranking is
+          by FRP, and labelling it by impact would misdescribe the sort. */}
+      <p className="font-mono text-[9px] leading-relaxed text-[#737373] mb-2">
+        Active wildfire clusters, by fire intensity.
+      </p>
+
+      <div className="space-y-0.5">
+        {events.map((event, index) => (
+          <EventRow
+            key={event.id}
+            event={event}
+            selected={selectedCluster?.id === event.id}
+            outsideTopList={index >= MAX_LISTED_EVENTS}
+            onSelect={() => setSelectedFire(event.seed)}
+          />
+        ))}
+      </div>
+
+      <div className="mt-3">
+        <TechnicalDataToggle />
+      </div>
     </div>
   );
 }
@@ -97,6 +132,8 @@ function EventRow({
   // Same generator the globe and the briefing use, and it is cached by fire id,
   // so this costs nothing beyond a map lookup after the first render.
   const impact = getDemoImpact(event.seed);
+  const showTechnical = useGeocore((s) => s.showTechnicalData);
+  const multiplierColor = aqiToTextColor(impact.worst.aqi);
 
   return (
     <button
@@ -128,18 +165,29 @@ function EventRow({
           {event.label}
         </span>
       </div>
+      {/* Default: two words a non-expert can act on — how big the fire is, and
+          how much dirtier it makes the air downwind. */}
       <div className="flex items-baseline justify-between gap-2 mt-0.5 pl-3">
-        <span className="font-mono text-[9px] text-[#737373] truncate">
-          {event.maxFrp.toFixed(0)} MW · {event.detectionCount}{" "}
-          {event.detectionCount === 1 ? "detection" : "detections"}
-        </span>
         <span
-          className="font-mono text-[10px] tabular-nums shrink-0"
+          className="font-mono text-[9px] shrink-0"
           style={{ color }}
         >
-          {impact.worst.baselineMultiplier.toFixed(1)}x
+          {intensityLabel(event.maxFrp)}
+        </span>
+        <span
+          className="font-mono text-[9px] tabular-nums truncate text-right"
+          style={{ color: multiplierColor }}
+        >
+          air {impact.worst.baselineMultiplier.toFixed(1)}x dirtier
         </span>
       </div>
+
+      {showTechnical && (
+        <div className="font-mono text-[8px] text-[#525252] mt-0.5 pl-3 truncate">
+          {event.maxFrp.toFixed(0)} MW · {event.detectionCount}{" "}
+          {event.detectionCount === 1 ? "detection" : "detections"}
+        </div>
+      )}
     </button>
   );
 }
