@@ -19,9 +19,22 @@ export function configureCesium() {
   }
 }
 
-export async function initializeViewer(
-  container: HTMLElement
-): Promise<Viewer> {
+/**
+ * Construct the viewer. **Synchronous, deliberately.**
+ *
+ * This used to be one async `initializeViewer` that awaited the Google tileset
+ * before returning. That made correct teardown impossible: the `Viewer` is
+ * built on the first line but the caller only receives it after the await, so
+ * a React effect cleanup that fired during loading had nothing to destroy.
+ * Under Strict Mode's mount/unmount/mount that produced two live viewers on
+ * one container — layers bound to one, the visible canvas belonging to the
+ * other.
+ *
+ * Returning the viewer synchronously means a caller always holds a concrete
+ * reference it can destroy, whatever the tileset is doing. Tiles load
+ * separately via `loadPhotorealisticTiles`.
+ */
+export function createViewer(container: HTMLElement): Viewer {
   configureCesium();
 
   const viewer = new Viewer(container, {
@@ -38,41 +51,6 @@ export async function initializeViewer(
     creditContainer: document.createElement("div"),
     msaaSamples: 4,
   });
-
-  // Load Google Photorealistic 3D Tiles.
-  //
-  // When these load they ARE the planet's surface — real elevation, real
-  // buildings. Leaving Cesium's own globe visible underneath puts two surfaces
-  // in nearly the same place, both writing depth, and the GPU resolves the tie
-  // per-pixel: that is the shimmering "translucent and patchy" look, and it is
-  // z-fighting rather than any translucency setting. So on success we hide the
-  // globe and let the tileset be the surface.
-  //
-  // On failure we must NOT hide it. The key is HTTP-referrer restricted, and a
-  // referrer that is not on the allowlist (localhost, for one) gets a 403 here
-  // — hiding the globe unconditionally would leave a black void with fire
-  // points floating in it. Falling back to the Cesium globe keeps a usable
-  // scene whatever Google says.
-  const googleApiKey = publicEnv.googleMapsApiKey;
-  if (googleApiKey) {
-    try {
-      const tileset = await createGooglePhotorealistic3DTileset({ key: googleApiKey });
-      viewer.scene.primitives.add(tileset);
-      viewer.scene.globe.show = false;
-    } catch (e) {
-      viewer.scene.globe.show = true;
-      console.error(
-        "Failed to load Google 3D Tiles — falling back to the Cesium globe. " +
-          "A 403 here usually means this origin is not on the API key's HTTP " +
-          "referrer allowlist:",
-        e
-      );
-    }
-  } else {
-    console.warn(
-      "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY not set — globe will render without 3D tiles"
-    );
-  }
 
   // Default camera: continental US overview (~35°N 100°W, 8000km altitude)
   viewer.camera.setView({
@@ -104,4 +82,51 @@ export async function initializeViewer(
   controller.maximumZoomDistance = 20_000_000;
 
   return viewer;
+}
+
+/**
+ * Attach Google Photorealistic 3D Tiles, if the key allows it.
+ *
+ * When these load they ARE the planet's surface — real elevation, real
+ * buildings. Leaving Cesium's own globe visible underneath puts two surfaces in
+ * nearly the same place, both writing depth, and the GPU resolves the tie
+ * per-pixel: that is the shimmering "translucent and patchy" look, and it is
+ * z-fighting rather than any translucency setting. So on success we hide the
+ * globe and let the tileset be the surface.
+ *
+ * On failure we must NOT hide it — that would leave a black void with fire
+ * points floating in it. Falling back to the Cesium globe keeps a usable scene
+ * whatever Google says, and it says no fairly often: the key is HTTP-referrer
+ * restricted, and separately, Photorealistic 3D Tiles are unavailable to
+ * accounts in some regions regardless of referrer.
+ *
+ * Returns whether the tileset became the surface.
+ */
+export async function loadPhotorealisticTiles(viewer: Viewer): Promise<boolean> {
+  const googleApiKey = publicEnv.googleMapsApiKey;
+  if (!googleApiKey) {
+    console.warn(
+      "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY not set — globe will render without 3D tiles"
+    );
+    return false;
+  }
+
+  try {
+    const tileset = await createGooglePhotorealistic3DTileset({
+      key: googleApiKey,
+    });
+    // The viewer can be torn down while this request is in flight — a Strict
+    // Mode remount does exactly that. Touching a destroyed viewer throws.
+    if (viewer.isDestroyed()) return false;
+    viewer.scene.primitives.add(tileset);
+    viewer.scene.globe.show = false;
+    return true;
+  } catch (e) {
+    if (!viewer.isDestroyed()) viewer.scene.globe.show = true;
+    console.error(
+      "Failed to load Google 3D Tiles — falling back to the Cesium globe:",
+      e
+    );
+    return false;
+  }
 }

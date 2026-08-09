@@ -8,6 +8,7 @@ import {
   Color,
   Math as CesiumMath,
   NearFarScalar,
+  PointPrimitive,
   PointPrimitiveCollection,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -153,12 +154,26 @@ function sizeForFrp(frp: number): number {
   return 6;
 }
 
+// Selection styling. The selected detection is emphasised in place — every
+// other fire stays on screen and keeps its own colour and size. Selection is a
+// property change on one existing PointPrimitive, never a rebuild of the
+// collection, so picking a fire costs nothing and cannot make points vanish.
+const SELECTED_POINT_SIZE_BONUS_PX = 9;
+const SELECTED_OUTLINE_WIDTH_PX = 3;
+const SELECTED_OUTLINE_COLOR = Color.WHITE;
+const DEFAULT_OUTLINE_COLOR = Color.fromCssColorString("#FFD6A0");
+const DEFAULT_OUTLINE_WIDTH_PX = 1;
+
 export default function FireLayer({ viewer }: FireLayerProps) {
   const { fires, error, loadFires } = useFireData();
   const setSelectedFire = useGeocore((s) => s.setSelectedFire);
+  const selectedFire = useGeocore((s) => s.selectedFire);
   const collectionRef = useRef<PointPrimitiveCollection | null>(null);
   const handlerRef = useRef<ScreenSpaceEventHandler | null>(null);
   const debounceRef = useRef<number | null>(null);
+  // fire id -> its point, so selection can restyle one primitive directly.
+  const primitivesByIdRef = useRef<Map<string, PointPrimitive>>(new Map());
+  const highlightedIdRef = useRef<string | null>(null);
 
   // Compute the current camera viewport bbox and load fires for it.
   // Falls back to a global fetch when the viewport is too wide, crosses the
@@ -291,9 +306,10 @@ export default function FireLayer({ viewer }: FireLayerProps) {
     viewer.scene.primitives.add(collection);
     collectionRef.current = collection;
 
+    const byId = new Map<string, PointPrimitive>();
     for (const fire of renderedFires.points) {
       const pickId: FirePickId = { type: "fire", fire };
-      collection.add({
+      const point = collection.add({
         position: Cartesian3.fromDegrees(
           fire.longitude,
           fire.latitude,
@@ -301,8 +317,8 @@ export default function FireLayer({ viewer }: FireLayerProps) {
         ),
         color: colorForFrp(fire.frp),
         pixelSize: sizeForFrp(fire.frp),
-        outlineColor: Color.fromCssColorString("#FFD6A0"),
-        outlineWidth: 1,
+        outlineColor: DEFAULT_OUTLINE_COLOR,
+        outlineWidth: DEFAULT_OUTLINE_WIDTH_PX,
         scaleByDistance: FIRE_POINT_SCALE_BY_DISTANCE,
         // 0 keeps the depth test on at every distance, so whichever surface is
         // active — the 3D tileset or the fallback globe — hides points on the
@@ -311,15 +327,55 @@ export default function FireLayer({ viewer }: FireLayerProps) {
         disableDepthTestDistance: 0,
         id: pickId,
       });
+      byId.set(fire.id, point);
     }
+    primitivesByIdRef.current = byId;
+    // The old primitives died with the old collection, so nothing is styled.
+    highlightedIdRef.current = null;
 
     return () => {
       if (!viewer.isDestroyed() && collectionRef.current) {
         viewer.scene.primitives.remove(collectionRef.current);
       }
       collectionRef.current = null;
+      primitivesByIdRef.current = new Map();
+      highlightedIdRef.current = null;
     };
   }, [viewer, renderedFires]);
+
+  // Emphasise the selected detection by mutating its existing primitive.
+  //
+  // Deliberately a separate effect from the build above, and deliberately not
+  // keyed on anything the build depends on: selecting a fire must never rebuild
+  // the collection. Every other point keeps rendering untouched.
+  useEffect(() => {
+    const byId = primitivesByIdRef.current;
+
+    const restore = (id: string | null) => {
+      if (!id) return;
+      const point = byId.get(id);
+      if (!point) return;
+      const fire = renderedFires.points.find((f) => f.id === id);
+      point.pixelSize = fire ? sizeForFrp(fire.frp) : point.pixelSize;
+      point.outlineColor = DEFAULT_OUTLINE_COLOR;
+      point.outlineWidth = DEFAULT_OUTLINE_WIDTH_PX;
+    };
+
+    if (highlightedIdRef.current === selectedFire?.id) return;
+    restore(highlightedIdRef.current);
+    highlightedIdRef.current = null;
+
+    if (!selectedFire) return;
+    const point = byId.get(selectedFire.id);
+    // A fire can be selected without being drawn — the list offers entries that
+    // the FRP cap may have thinned out. Nothing to emphasise in that case.
+    if (!point) return;
+
+    point.pixelSize = sizeForFrp(selectedFire.frp) + SELECTED_POINT_SIZE_BONUS_PX;
+    point.outlineColor = SELECTED_OUTLINE_COLOR;
+    point.outlineWidth = SELECTED_OUTLINE_WIDTH_PX;
+    highlightedIdRef.current = selectedFire.id;
+  }, [selectedFire, renderedFires]);
 
   // Click picking — scene.pick returns the PointPrimitive; its `id` is our
   // FirePickId, which carries the full FireEvent inline. No fetch, no

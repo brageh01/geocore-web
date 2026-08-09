@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { Viewer } from "cesium";
-import { initializeViewer } from "@/lib/cesium";
+import { useEffect, useRef, useState } from "react";
+import type { Viewer } from "cesium";
+import { createViewer, loadPhotorealisticTiles } from "@/lib/cesium";
 import { useGeocore } from "@/store/useGeocore";
 import { DEMO_MODE } from "@/lib/demo/flag";
 import FireLayer from "./FireLayer";
@@ -11,48 +11,57 @@ import DemoCameraChoreography from "./DemoCameraChoreography";
 
 export default function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const viewerRef = useRef<Viewer | null>(null);
-  const [viewerReady, setViewerReady] = useState(false);
+  // The viewer is state, not a ref, for two reasons: reading a ref during
+  // render is what the react-hooks/refs lint errors were about, and a ref
+  // mutation does not re-render, so child layers could not be handed the
+  // viewer reliably. State makes "the viewer exists" a render-visible fact.
+  const [viewer, setViewer] = useState<Viewer | null>(null);
   const activeLayers = useGeocore((s) => s.activeLayers);
-  const setViewer = useGeocore((s) => s.setViewer);
-
-  const initViewer = useCallback(async () => {
-    if (!containerRef.current || viewerRef.current) return;
-
-    try {
-      const viewer = await initializeViewer(containerRef.current);
-      viewerRef.current = viewer;
-      // Publish the viewer so consumers outside this subtree — the top bar's
-      // camera presets, the impact overlay — can reach it without a prop.
-      setViewer(viewer);
-      setViewerReady(true);
-    } catch (err) {
-      console.error("Failed to initialize Cesium viewer:", err);
-    }
-  }, [setViewer]);
+  const publishViewer = useGeocore((s) => s.setViewer);
 
   useEffect(() => {
-    initViewer();
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Synchronous construction is what makes this effect correct under Strict
+    // Mode. The previous version awaited an async initialiser, so the cleanup
+    // could fire while the viewer was still being built and had nothing to
+    // destroy; the guard `if (viewerRef.current) return` then let the second
+    // mount build a *second* viewer on the same container. Both stayed alive,
+    // and whichever won the race got the visible canvas while the layers were
+    // bound to the other — fires rendering into an orphan, camera flights
+    // moving a camera nobody could see.
+    //
+    // Now: mount creates one viewer, cleanup destroys that exact viewer, and
+    // the second mount starts clean. Dev and production behave identically.
+    let created: Viewer;
+    try {
+      created = createViewer(container);
+    } catch (err) {
+      console.error("Failed to initialize Cesium viewer:", err);
+      return;
+    }
+
+    setViewer(created);
+    publishViewer(created);
+
+    // Fire and forget: the tileset either becomes the surface or the Cesium
+    // globe stays. It guards against the viewer being destroyed mid-request.
+    void loadPhotorealisticTiles(created);
 
     return () => {
-      if (viewerRef.current && !viewerRef.current.isDestroyed()) {
-        viewerRef.current.destroy();
-        viewerRef.current = null;
-        setViewer(null);
-        setViewerReady(false);
-      }
+      setViewer(null);
+      publishViewer(null);
+      if (!created.isDestroyed()) created.destroy();
     };
-  }, [initViewer, setViewer]);
+  }, [publishViewer]);
 
   return (
     <div className="absolute inset-0">
       <div ref={containerRef} className="w-full h-full" />
-      {viewerReady && viewerRef.current && activeLayers.fires && (
-        <FireLayer viewer={viewerRef.current} />
-      )}
-      {/* Both read the viewer from the store, so they need no ref access here. */}
-      {DEMO_MODE && activeLayers.aqi && <DemoImpactLayer />}
-      {DEMO_MODE && <DemoCameraChoreography />}
+      {viewer && activeLayers.fires && <FireLayer viewer={viewer} />}
+      {viewer && DEMO_MODE && activeLayers.aqi && <DemoImpactLayer />}
+      {viewer && DEMO_MODE && <DemoCameraChoreography />}
     </div>
   );
 }
