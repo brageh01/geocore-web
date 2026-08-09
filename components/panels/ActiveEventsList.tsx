@@ -138,13 +138,16 @@ function EventRow({
   return (
     <button
       onClick={onSelect}
-      className="w-full text-left px-2 py-1.5 border-l-2 transition-colors"
+      // The separator for an appended selection is a class, not an inline
+      // style: setting `borderTop` inline beside a `borderColor` shorthand made
+      // React warn about mixing shorthand and longhand for the same property,
+      // and dropping it on rerender is exactly the styling bug it warns about.
+      className={`w-full text-left px-2 py-1.5 border-l-2 transition-colors${
+        outsideTopList ? " mt-2 border-t border-t-[#262626]" : ""
+      }`}
       style={{
-        borderColor: selected ? color : "transparent",
+        borderLeftColor: selected ? color : "transparent",
         backgroundColor: selected ? "#1a1a1a" : "transparent",
-        // Separate an appended selection from the ranked list above it.
-        borderTop: outsideTopList ? "1px solid #262626" : undefined,
-        marginTop: outsideTopList ? "0.5rem" : undefined,
       }}
     >
       {outsideTopList && (

@@ -8,6 +8,7 @@ import { DEMO_MODE } from "@/lib/demo/flag";
 import FireLayer from "./FireLayer";
 import DemoImpactLayer from "./DemoImpactLayer";
 import DemoCameraChoreography from "./DemoCameraChoreography";
+import GlobeLegend from "./GlobeLegend";
 
 export default function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -62,6 +63,7 @@ export default function GlobeViewer() {
       {viewer && activeLayers.fires && <FireLayer viewer={viewer} />}
       {viewer && DEMO_MODE && activeLayers.aqi && <DemoImpactLayer />}
       {viewer && DEMO_MODE && <DemoCameraChoreography />}
+      {DEMO_MODE && <GlobeLegend />}
     </div>
   );
 }

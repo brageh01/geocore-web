@@ -289,6 +289,17 @@ function avoidFrpCollision(pm25: number, frp: number): number {
   return Math.abs(clamped - frp) < 0.1 ? clamped + 0.2 : clamped;
 }
 
+const COMPASS_POINTS = [
+  "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+  "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+];
+
+/** A bearing in degrees as a compass point — "NE" reads where "46°" does not. */
+export function compassPoint(bearingDeg: number): string {
+  const normalised = ((bearingDeg % 360) + 360) % 360;
+  return COMPASS_POINTS[Math.round(normalised / 22.5) % 16];
+}
+
 /** FIRMS reports acquisition time as an unpadded HHMM string ("934" = 09:34). */
 export function formatAcqTime(acqTime: string): string {
   const padded = acqTime.padStart(4, "0");

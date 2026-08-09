@@ -10,11 +10,16 @@ import {
   HorizontalOrigin,
   LabelStyle,
   NearFarScalar,
+  PolylineDashMaterialProperty,
   PolylineGlowMaterialProperty,
   VerticalOrigin,
 } from "cesium";
 import { useGeocore } from "@/store/useGeocore";
-import { getDemoImpact, type DemoAQIStation } from "@/lib/demo/fakeAQI";
+import {
+  compassPoint,
+  getDemoImpact,
+  type DemoAQIStation,
+} from "@/lib/demo/fakeAQI";
 import { aqiToColor } from "@/lib/aqiScale";
 import { FIRE_POINT_ALTITUDE_M } from "./FireLayer";
 import type { FireEvent } from "@/lib/contracts";
@@ -44,11 +49,47 @@ const ARC_SAMPLES = 48;
 const ARC_APEX_PER_KM_M = 180;
 const ARC_APEX_MAX_M = 26_000;
 
+// Wind spine: long enough to read as a direction, short enough not to compete
+// with the smoke arcs it runs alongside.
+const WIND_ARROW_LENGTH_KM = 45;
+const WIND_ARROW_DELAY_MS = 250;
+
 const LINK_COLOR = "#FF8A3D";
 const LINK_WIDTH_PX = 6;
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+const EARTH_RADIUS_KM = 6371;
+
+/** Great-circle destination — shared with the plume generator's geometry. */
+function destinationFrom(
+  latitude: number,
+  longitude: number,
+  bearingDeg: number,
+  distanceKm: number
+): { latitude: number; longitude: number } {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  const angular = distanceKm / EARTH_RADIUS_KM;
+  const bearing = toRad(bearingDeg);
+  const lat1 = toRad(latitude);
+  const lon1 = toRad(longitude);
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angular) +
+      Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing)
+  );
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1),
+      Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2)
+    );
+  return {
+    latitude: toDeg(lat2),
+    longitude: ((toDeg(lon2) + 540) % 360) - 180,
+  };
+}
 
 /**
  * Sample a great-circle-ish arc from the fire to a station, bowed upward.
@@ -89,6 +130,84 @@ export default function DemoImpactLayer() {
     const impact = getDemoImpact(selectedFire);
     const created: Entity[] = [];
     const t0 = performance.now();
+
+    // --- wind direction ---
+    // The panel says "downwind" but nothing in the scene said which way. A
+    // short dashed spine along the plume axis, labelled with the compass
+    // point, anchors that word to the geometry.
+    const windEnd = destinationFrom(
+      selectedFire.latitude,
+      selectedFire.longitude,
+      impact.downwindBearingDeg,
+      WIND_ARROW_LENGTH_KM
+    );
+    // The label hangs off the middle of the spine rather than its tip. At the
+    // tip it sat on top of the nearest station's label — both are downwind of
+    // the same fire, so they compete for the same patch of screen.
+    const windLabelAt = destinationFrom(
+      selectedFire.latitude,
+      selectedFire.longitude,
+      impact.downwindBearingDeg,
+      WIND_ARROW_LENGTH_KM * 0.45
+    );
+    const windAlpha = () =>
+      clamp01((performance.now() - t0 - WIND_ARROW_DELAY_MS) / 400);
+
+    created.push(
+      viewer.entities.add({
+        polyline: {
+          positions: [
+            Cartesian3.fromDegrees(
+              selectedFire.longitude,
+              selectedFire.latitude,
+              FIRE_POINT_ALTITUDE_M
+            ),
+            Cartesian3.fromDegrees(
+              windEnd.longitude,
+              windEnd.latitude,
+              FIRE_POINT_ALTITUDE_M
+            ),
+          ],
+          width: 2,
+          material: new PolylineDashMaterialProperty({
+            color: new CallbackProperty(
+              () => Color.WHITE.withAlpha(0.75 * windAlpha()),
+              false
+            ),
+            dashLength: 12,
+          }),
+        },
+        position: Cartesian3.fromDegrees(
+          windLabelAt.longitude,
+          windLabelAt.latitude,
+          FIRE_POINT_ALTITUDE_M
+        ),
+        label: {
+          text: `WIND → ${compassPoint(impact.downwindBearingDeg)}`,
+          font: "600 10px ui-monospace, SFMono-Regular, monospace",
+          style: LabelStyle.FILL,
+          fillColor: new CallbackProperty(
+            () => Color.WHITE.withAlpha(0.85 * windAlpha()),
+            false
+          ),
+          showBackground: true,
+          backgroundColor: new CallbackProperty(
+            () => new Color(0.04, 0.04, 0.04, 0.7 * windAlpha()),
+            false
+          ),
+          backgroundPadding: new Cartesian2(6, 4),
+          horizontalOrigin: HorizontalOrigin.CENTER,
+          verticalOrigin: VerticalOrigin.TOP,
+          pixelOffset: new Cartesian2(0, 10),
+          translucencyByDistance: new NearFarScalar(
+            1_500_000,
+            1.0,
+            4_000_000,
+            0.0
+          ),
+        },
+      })
+    );
 
     impact.stations.forEach((station, index) => {
       const arc = buildArc(selectedFire, station);
@@ -168,7 +287,17 @@ export default function DemoImpactLayer() {
               () => Color.BLACK.withAlpha(0.9 * markerAlpha()),
               false
             ),
-            outlineWidth: 3,
+            outlineWidth: 2,
+            // A dark plate behind the text. An outline alone was not enough:
+            // the labels sit over bright terrain and over the glowing arcs,
+            // and white-on-pale was unreadable exactly where the plume is
+            // densest — the part of the frame that matters most.
+            showBackground: true,
+            backgroundColor: new CallbackProperty(
+              () => new Color(0.04, 0.04, 0.04, 0.72 * markerAlpha()),
+              false
+            ),
+            backgroundPadding: new Cartesian2(7, 5),
             horizontalOrigin: HorizontalOrigin.CENTER,
             verticalOrigin: VerticalOrigin.BOTTOM,
             pixelOffset: new Cartesian2(0, -18),
