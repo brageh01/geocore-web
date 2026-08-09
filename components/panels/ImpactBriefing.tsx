@@ -1,31 +1,56 @@
 "use client";
 
+import { useMemo } from "react";
 import { useGeocore } from "@/store/useGeocore";
-import { aqiCategory, aqiToColor } from "@/lib/aqiScale";
+import {
+  AQI_BANDS,
+  aqiCategoryName,
+  aqiCategoryPhrase,
+  aqiToColor,
+  aqiToTextColor,
+} from "@/lib/aqiScale";
 import {
   BASELINE_PM25_UGM3,
   formatAcqTime,
   getDemoImpact,
 } from "@/lib/demo/fakeAQI";
+import {
+  clusterFireEventsCached,
+  findClusterForFire,
+} from "@/lib/demo/fireClusters";
+import TechnicalDataToggle from "@/components/panels/TechnicalDataToggle";
 import type { FireEvent } from "@/lib/contracts";
 
 /**
- * The EVENT DATA panel in demo mode: a briefing rather than a telemetry dump.
+ * The EVENT DATA panel in demo mode.
  *
- * The lead is the consequence — how far above a clean-air baseline the worst
- * downwind station is reading — because that is the claim the product exists to
- * make. The satellite fields that used to fill this panel are demoted to a
- * footer, since "which VIIRS pass saw it" is provenance, not a finding.
+ * Written for someone who has never seen an AQI number. The default state
+ * carries no unit a layperson does not already know: the lead is a sentence,
+ * the headline is a multiple of clean air, and every station carries a plain
+ * category name beside its reading. Everything that needs a domain to
+ * interpret — radiative power, brightness temperature, sensor and overpass —
+ * sits behind the TECHNICAL DATA toggle, collapsed by default.
  */
 export default function ImpactBriefing({ fire }: { fire: FireEvent }) {
   const setSelectedFire = useGeocore((s) => s.setSelectedFire);
+  const fires = useGeocore((s) => s.fires);
+  const showTechnical = useGeocore((s) => s.showTechnicalData);
+
   const impact = getDemoImpact(fire);
   const { worst, stations } = impact;
-  const worstColor = aqiToColor(worst.aqi);
+  // Swatches use the true EPA colour; type uses the lifted variant.
+  const worstTextColor = aqiToTextColor(worst.aqi);
+
+  // Only needed for the technical section, but cheap: the clustering is cached
+  // on the fires array identity and shared with the active-events list.
+  const cluster = useMemo(
+    () => findClusterForFire(clusterFireEventsCached(fires), fire),
+    [fires, fire]
+  );
 
   return (
     <div className="p-3">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <h2 className="font-mono text-[10px] font-bold tracking-widest text-[#FF4500] uppercase">
           Impact Assessment
         </h2>
@@ -37,96 +62,71 @@ export default function ImpactBriefing({ fire }: { fire: FireEvent }) {
         </button>
       </div>
 
-      {/* Headline — the whole point of the panel. */}
+      {/* 1 — the whole finding, in one sentence. */}
+      <p className="text-[13px] leading-relaxed text-[#e5e5e5] mb-4">
+        Smoke from this fire is reaching{" "}
+        <span className="font-semibold">{worst.name}</span>,{" "}
+        {worst.distanceKm.toFixed(0)} km downwind. The air there is{" "}
+        <span className="font-semibold" style={{ color: worstTextColor }}>
+          {worst.baselineMultiplier.toFixed(1)} times dirtier
+        </span>{" "}
+        than clean air — {aqiCategoryPhrase(worst.aqi)}.
+      </p>
+
+      {/* 2 — the headline, labelled so it stands on its own. */}
       <div className="mb-4">
         <div
           className="font-mono font-bold leading-none tracking-tight"
-          style={{ color: worstColor, fontSize: "44px" }}
+          style={{ color: worstTextColor, fontSize: "40px" }}
         >
           {worst.baselineMultiplier.toFixed(1)}x
         </div>
-        <div className="font-mono text-[11px] text-[#a3a3a3] mt-1.5 uppercase tracking-wider">
-          baseline PM2.5
+        <div className="font-mono text-[11px] text-[#a3a3a3] mt-1.5">
+          dirtier than clean air
         </div>
-        <div className="font-mono text-[10px] text-[#737373] mt-0.5">
-          against {BASELINE_PM25_UGM3} µg/m³ clean-air reference
-        </div>
-      </div>
-
-      {/* Worst-hit station. */}
-      <div
-        className="border-l-2 pl-2.5 py-1.5 mb-4"
-        style={{ borderColor: worstColor }}
-      >
-        <div className="font-mono text-[10px] text-[#737373] uppercase tracking-wide mb-1">
-          Worst hit
-        </div>
-        <div className="font-mono text-sm text-[#e5e5e5] leading-tight">
-          {worst.name}
-        </div>
-        <div className="flex items-baseline gap-2 mt-1">
-          <span
-            className="font-mono text-lg font-bold"
-            style={{ color: worstColor }}
-          >
-            {worst.pm25.toFixed(1)}
-          </span>
-          <span className="font-mono text-[10px] text-[#a3a3a3]">µg/m³</span>
-          <span
-            className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5"
-            style={{ color: worstColor, border: `1px solid ${worstColor}66` }}
-          >
-            {aqiCategory(worst.aqi)}
-          </span>
-        </div>
-        <div className="font-mono text-[10px] text-[#737373] mt-1">
-          {worst.distanceKm.toFixed(0)} km downwind · AQI {worst.aqi}
+        <div className="font-mono text-[9px] text-[#737373] mt-0.5">
+          clean air reference: {BASELINE_PM25_UGM3} µg/m³
         </div>
       </div>
 
-      <div className="space-y-2 mb-4">
-        <BriefingRow
-          label="Stations affected"
-          value={`${stations.length}`}
-        />
-        <BriefingRow label="Source FRP" value={`${fire.frp.toFixed(1)} MW`} />
-        <BriefingRow
-          label="Detected"
-          value={`${fire.acq_date} ${formatAcqTime(fire.acq_time)} UTC`}
-        />
-      </div>
-
-      {/* Every station, nearest first. */}
+      {/* 3 — every station, nearest first, each with a category in words. */}
       <div className="mb-4">
         <div className="font-mono text-[10px] font-bold tracking-widest text-[#737373] uppercase mb-2">
-          Downwind Stations
+          Air quality downwind
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           {stations.map((station) => {
-            const color = aqiToColor(station.aqi);
+            const swatch = aqiToColor(station.aqi);
+            const text = aqiToTextColor(station.aqi);
             return (
               <div
                 key={station.id}
-                className="flex items-center justify-between gap-2 border-b border-[#1a1a1a] pb-1"
+                className="border-b border-[#1a1a1a] pb-1.5 last:border-b-0"
               >
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span
-                    className="w-1.5 h-1.5 shrink-0"
-                    style={{ backgroundColor: color }}
-                  />
+                <div className="flex items-baseline justify-between gap-2">
                   <span className="font-mono text-[11px] text-[#e5e5e5] truncate">
                     {station.name}
                   </span>
-                </div>
-                <div className="flex items-baseline gap-1.5 shrink-0">
-                  <span className="font-mono text-[9px] text-[#737373]">
-                    {station.distanceKm.toFixed(0)}km
+                  <span className="font-mono text-[9px] text-[#737373] shrink-0">
+                    {station.distanceKm.toFixed(0)} km away
                   </span>
+                </div>
+                <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <span
+                    className="w-1.5 h-1.5 shrink-0 translate-y-[-1px]"
+                    style={{ backgroundColor: swatch }}
+                  />
                   <span
                     className="font-mono text-[11px] tabular-nums"
-                    style={{ color }}
+                    style={{ color: text }}
                   >
                     {station.pm25.toFixed(1)}
+                  </span>
+                  <span className="font-mono text-[9px] text-[#737373]">
+                    µg/m³
+                  </span>
+                  <span className="font-mono text-[9px]" style={{ color: text }}>
+                    {aqiCategoryName(station.aqi)}
                   </span>
                 </div>
               </div>
@@ -135,45 +135,79 @@ export default function ImpactBriefing({ fire }: { fire: FireEvent }) {
         </div>
       </div>
 
-      {/* Provenance, demoted. */}
-      <div className="border-t border-[#1a1a1a] pt-2 space-y-1">
-        <FooterRow
-          label="Source"
-          value={`VIIRS ${fire.satellite} · ${
-            fire.daynight === "D" ? "Day" : "Night"
-          }`}
-        />
-        <FooterRow
-          label="Position"
-          value={`${fire.latitude.toFixed(3)}, ${fire.longitude.toFixed(3)}`}
-        />
-        <FooterRow
-          label="Brightness"
-          value={`${fire.brightness.toFixed(1)} K`}
-        />
+      {/* 4 — what the colours mean. */}
+      <div className="mb-3">
+        <div className="font-mono text-[9px] tracking-widest text-[#737373] uppercase mb-1.5">
+          Air quality scale
+        </div>
+        <div className="flex gap-px">
+          {AQI_BANDS.map((band) => (
+            <div key={band.upperAqi} className="flex-1 min-w-0">
+              <div className="h-1.5" style={{ backgroundColor: band.color }} />
+              <div className="font-mono text-[7px] leading-tight text-[#737373] mt-1 break-words">
+                {band.name}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* 5 — the one unit that survives into the default view. */}
+      <p className="font-mono text-[9px] leading-relaxed text-[#525252] mb-3">
+        PM2.5 — fine smoke particles, micrograms per cubic metre.
+      </p>
+
+      <TechnicalDataToggle />
+
+      {showTechnical && (
+        <div className="mt-2 space-y-1 border-t border-[#1a1a1a] pt-2">
+          <TechnicalRow
+            label="Source FRP"
+            value={`${fire.frp.toFixed(1)} MW`}
+          />
+          <TechnicalRow
+            label="Brightness"
+            value={`${fire.brightness.toFixed(1)} K`}
+          />
+          <TechnicalRow
+            label="Position"
+            value={`${fire.latitude.toFixed(3)}, ${fire.longitude.toFixed(3)}`}
+          />
+          <TechnicalRow
+            label="Detections in cluster"
+            value={cluster ? String(cluster.detectionCount) : "1"}
+          />
+          <TechnicalRow label="Sensor" value={sensorName(fire.satellite)} />
+          <TechnicalRow
+            label="Overpass"
+            value={fire.daynight === "D" ? "Daytime" : "Night-time"}
+          />
+          <TechnicalRow
+            label="Detected"
+            value={`${fire.acq_date} ${formatAcqTime(fire.acq_time)} UTC`}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-function BriefingRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between items-baseline border-b border-[#1a1a1a] pb-1">
-      <span className="font-mono text-[10px] text-[#737373] uppercase tracking-wide">
-        {label}
-      </span>
-      <span className="font-mono text-xs text-[#e5e5e5]">{value}</span>
-    </div>
-  );
+/** FIRMS reports the VIIRS platform as a single character. */
+function sensorName(satellite: string): string {
+  if (satellite === "N") return "VIIRS · Suomi NPP";
+  if (satellite === "1") return "VIIRS · NOAA-20";
+  return `VIIRS · ${satellite}`;
 }
 
-function FooterRow({ label, value }: { label: string; value: string }) {
+function TechnicalRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between items-baseline">
-      <span className="font-mono text-[9px] text-[#525252] uppercase tracking-wide">
+    <div className="flex justify-between items-baseline gap-2">
+      <span className="font-mono text-[9px] text-[#525252] uppercase tracking-wide shrink-0">
         {label}
       </span>
-      <span className="font-mono text-[9px] text-[#737373]">{value}</span>
+      <span className="font-mono text-[9px] text-[#a3a3a3] text-right">
+        {value}
+      </span>
     </div>
   );
 }

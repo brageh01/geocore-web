@@ -24,10 +24,15 @@ interface GeocoreState {
   // module's runtime bundle; only the type is referenced.
   viewer: Viewer | null;
   activeLayers: ActiveLayers;
+  // One switch governing the TECHNICAL DATA sections in both the impact
+  // briefing and the active-events list, so the two never disagree. Lives in
+  // the store rather than component state so it survives fire selection.
+  showTechnicalData: boolean;
   timelineDate: Date;
   setSelectedFire: (fire: FireEvent | null) => void;
   setFires: (fires: FireEvent[]) => void;
   setViewer: (viewer: Viewer | null) => void;
+  toggleTechnicalData: () => void;
   setAqiStations: (stations: AQIStation[]) => void;
   toggleLayer: (layer: keyof ActiveLayers) => void;
   setTimelineDate: (date: Date) => void;
@@ -38,6 +43,7 @@ export const useGeocore = create<GeocoreState>((set) => ({
   fires: [],
   aqiStations: [],
   viewer: null,
+  showTechnicalData: false,
   activeLayers: {
     fires: true,
     aqi: true,
@@ -46,6 +52,8 @@ export const useGeocore = create<GeocoreState>((set) => ({
   setSelectedFire: (fire) => set({ selectedFire: fire }),
   setFires: (fires) => set({ fires }),
   setViewer: (viewer) => set({ viewer }),
+  toggleTechnicalData: () =>
+    set((state) => ({ showTechnicalData: !state.showTechnicalData })),
   setAqiStations: (stations) => set({ aqiStations: stations }),
   toggleLayer: (layer) =>
     set((state) => ({

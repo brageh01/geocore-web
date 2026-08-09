@@ -164,3 +164,16 @@ export function findClusterForFire(
 
   return best;
 }
+
+// Both the active-events list and the impact briefing need the clustering, and
+// `fires` is a stable reference in demo mode, so cache on array identity rather
+// than clustering 10k detections twice per render.
+let cachedInput: FireEvent[] | null = null;
+let cachedOutput: FireCluster[] | null = null;
+
+export function clusterFireEventsCached(fires: FireEvent[]): FireCluster[] {
+  if (cachedInput === fires && cachedOutput) return cachedOutput;
+  cachedOutput = clusterFireEvents(fires);
+  cachedInput = fires;
+  return cachedOutput;
+}
