@@ -2,6 +2,7 @@ import {
   Ion,
   buildModuleUrl,
   CameraEventType,
+  KeyboardEventModifier,
   createGooglePhotorealistic3DTileset,
   Viewer,
   Math as CesiumMath,
@@ -80,8 +81,23 @@ export function createViewer(container: HTMLElement): Viewer {
   // Input / zoom configuration — ensure mouse wheel AND trackpad pinch both
   // drive zoom, and remove PINCH from tiltEventTypes so two-finger gestures
   // on a trackpad zoom cleanly instead of fighting with tilt.
+  //
+  // The CTRL-modified WHEEL entry is what makes a trackpad *pinch* work.
+  // Browsers do not report a pinch as a touch gesture on a trackpad: they
+  // synthesise a wheel event with ctrlKey set. Cesium reads that modifier
+  // (ScreenSpaceEventHandler.getModifier) and dispatches to the WHEEL+CTRL
+  // action, so a zoomEventTypes list containing only bare WHEEL never sees it —
+  // the event arrives, gets preventDefault'd, and is then dropped. Cesium's own
+  // default list has the same gap, so pinch has never zoomed here.
+  //
+  // CameraEventType.PINCH below is the *touchscreen* two-finger gesture, which
+  // is a different input path and is left alone.
   const controller = viewer.scene.screenSpaceCameraController;
-  controller.zoomEventTypes = [CameraEventType.WHEEL, CameraEventType.PINCH];
+  controller.zoomEventTypes = [
+    CameraEventType.WHEEL,
+    CameraEventType.PINCH,
+    { eventType: CameraEventType.WHEEL, modifier: KeyboardEventModifier.CTRL },
+  ];
   controller.tiltEventTypes = [CameraEventType.MIDDLE_DRAG];
   controller.minimumZoomDistance = 500;
   controller.maximumZoomDistance = 20_000_000;
