@@ -106,12 +106,15 @@ function quantizeBbox(
 // occlusion resolves cleanly.
 export const FIRE_POINT_ALTITUDE_M = 3000;
 
-// Point size vs camera distance. The previous ramp bottomed out at 0.3 and
-// stopped growing closer than 1000 km, which made a global view a solid orange
-// smear and a close view no more legible than a mid view. Widening it in both
-// directions: fine speckle from orbit, chunky distinct markers up close.
+// Point size vs camera distance. The near end was 1.8, which magnified an
+// already-large marker at exactly the distances the demo presets fly to
+// (~600 km): dense clusters merged into one pale mass that hid the terrain and
+// read as cloud, not fire. Below 1.0 the ramp now *shrinks* markers as the
+// camera closes in, which is what keeps neighbouring detections separate at
+// regional framing. The far end is untouched, so the opening global view is
+// unchanged apart from the smaller base sizes.
 const FIRE_POINT_SCALE_NEAR_DISTANCE_M = 200_000;
-const FIRE_POINT_SCALE_NEAR = 1.8;
+const FIRE_POINT_SCALE_NEAR = 0.85;
 const FIRE_POINT_SCALE_FAR_DISTANCE_M = 25_000_000;
 const FIRE_POINT_SCALE_FAR = 0.25;
 
@@ -123,6 +126,31 @@ const FIRE_POINT_SCALE_BY_DISTANCE = new NearFarScalar(
   FIRE_POINT_SCALE_FAR_DISTANCE_M,
   FIRE_POINT_SCALE_FAR
 );
+
+// Base marker diameter in pixels, before scaleByDistance. Roughly two thirds of
+// the previous ramp (was 14/12/10/8/6). Note the floor cannot go much below
+// this: a dense VIIRS cluster is a 375 m grid, which at the presets' ~600 km
+// framing is under 1 px between neighbours, so some overlap is inherent to the
+// data. The aim is a compact hot mass with visible structure, not separation
+// that the sampling resolution cannot support.
+const FIRE_SIZE_PX_EXTREME = 9; // >= 100 MW
+const FIRE_SIZE_PX_HIGH = 7; //   >= 50 MW
+const FIRE_SIZE_PX_MEDIUM = 6; // >= 20 MW
+const FIRE_SIZE_PX_LOW = 5; //    >= 5 MW
+const FIRE_SIZE_PX_MINIMAL = 4; // below 5 MW
+
+// FRP ramp, fully saturated and pushed toward red. The old low end (#FFB347)
+// was a desaturated peach — at small sizes over pale terrain it read as haze,
+// and it is the colour the weakest detections use, which is most of them. Every
+// stop is now at 100% saturation with hue falling from 28deg to 5deg as power
+// rises, so the ramp reads as heat and the dimmest marker is still unmistakably
+// fire. All stops are fully opaque — as the old ones were; the paleness came
+// from the desaturated fill and the halo, not from alpha.
+const FIRE_COLOR_EXTREME = Color.fromCssColorString("#FF1500");
+const FIRE_COLOR_HIGH = Color.fromCssColorString("#FF3300");
+const FIRE_COLOR_MEDIUM = Color.fromCssColorString("#FF4E00");
+const FIRE_COLOR_LOW = Color.fromCssColorString("#FF6200");
+const FIRE_COLOR_MINIMAL = Color.fromCssColorString("#FF7A0A");
 
 interface FireLayerProps {
   viewer: Viewer;
@@ -137,32 +165,45 @@ interface FirePickId {
 }
 
 function colorForFrp(frp: number): Color {
-  // EPA-ish orange→red gradient based on fire radiative power (MW)
-  if (frp >= 100) return Color.fromCssColorString("#FF1A00");
-  if (frp >= 50) return Color.fromCssColorString("#FF3D00");
-  if (frp >= 20) return Color.fromCssColorString("#FF6A00");
-  if (frp >= 5) return Color.fromCssColorString("#FF8C1A");
-  return Color.fromCssColorString("#FFB347");
+  // Hot orange→red gradient based on fire radiative power (MW)
+  if (frp >= 100) return FIRE_COLOR_EXTREME;
+  if (frp >= 50) return FIRE_COLOR_HIGH;
+  if (frp >= 20) return FIRE_COLOR_MEDIUM;
+  if (frp >= 5) return FIRE_COLOR_LOW;
+  return FIRE_COLOR_MINIMAL;
 }
 
 function sizeForFrp(frp: number): number {
-  // 6px baseline, up to ~14px for very intense fires
-  if (frp >= 100) return 14;
-  if (frp >= 50) return 12;
-  if (frp >= 20) return 10;
-  if (frp >= 5) return 8;
-  return 6;
+  if (frp >= 100) return FIRE_SIZE_PX_EXTREME;
+  if (frp >= 50) return FIRE_SIZE_PX_HIGH;
+  if (frp >= 20) return FIRE_SIZE_PX_MEDIUM;
+  if (frp >= 5) return FIRE_SIZE_PX_LOW;
+  return FIRE_SIZE_PX_MINIMAL;
 }
 
 // Selection styling. The selected detection is emphasised in place — every
 // other fire stays on screen and keeps its own colour and size. Selection is a
 // property change on one existing PointPrimitive, never a rebuild of the
 // collection, so picking a fire costs nothing and cannot make points vanish.
-const SELECTED_POINT_SIZE_BONUS_PX = 9;
-const SELECTED_OUTLINE_WIDTH_PX = 3;
+// Extra diameter and outline for the selected detection. The bonus is smaller
+// than it was because the markers it is added to are smaller — 6px on a 5px
+// marker is still slightly over double the size of its neighbours.
+const SELECTED_POINT_SIZE_BONUS_PX = 6;
+const SELECTED_OUTLINE_WIDTH_PX = 2;
 const SELECTED_OUTLINE_COLOR = Color.WHITE;
-const DEFAULT_OUTLINE_COLOR = Color.fromCssColorString("#FFD6A0");
-const DEFAULT_OUTLINE_WIDTH_PX = 1;
+// How far the selected marker's fill is lifted toward white (0 = unchanged,
+// 1 = white). Size and a white ring alone are weaker cues now that no marker
+// carries a halo, so the selection is brightened as well. Kept low: lifting a
+// saturated red toward white also desaturates it, and much past this the
+// selected marker turns pink and stops reading as the hottest thing on screen.
+const SELECTED_BRIGHTEN = 0.22;
+
+// Unselected markers carry no outline at all. The old 1px #FFD6A0 ring was a
+// pale halo on every point: it added 2px to each marker's footprint, and at
+// regional framing the rings of adjacent detections merged into a light film
+// over the terrain — most of what made the cluster look like cloud.
+const DEFAULT_OUTLINE_COLOR = Color.TRANSPARENT;
+const DEFAULT_OUTLINE_WIDTH_PX = 0;
 
 export default function FireLayer({ viewer }: FireLayerProps) {
   const { fires, error, loadFires } = useFireData();
@@ -356,7 +397,10 @@ export default function FireLayer({ viewer }: FireLayerProps) {
       const point = byId.get(id);
       if (!point) return;
       const fire = renderedFires.points.find((f) => f.id === id);
-      point.pixelSize = fire ? sizeForFrp(fire.frp) : point.pixelSize;
+      if (fire) {
+        point.pixelSize = sizeForFrp(fire.frp);
+        point.color = colorForFrp(fire.frp);
+      }
       point.outlineColor = DEFAULT_OUTLINE_COLOR;
       point.outlineWidth = DEFAULT_OUTLINE_WIDTH_PX;
     };
@@ -372,6 +416,12 @@ export default function FireLayer({ viewer }: FireLayerProps) {
     if (!point) return;
 
     point.pixelSize = sizeForFrp(selectedFire.frp) + SELECTED_POINT_SIZE_BONUS_PX;
+    // brighten() writes into the result argument and leaves the receiver alone,
+    // which matters here: colorForFrp hands back one shared instance per band.
+    point.color = colorForFrp(selectedFire.frp).brighten(
+      SELECTED_BRIGHTEN,
+      new Color()
+    );
     point.outlineColor = SELECTED_OUTLINE_COLOR;
     point.outlineWidth = SELECTED_OUTLINE_WIDTH_PX;
     highlightedIdRef.current = selectedFire.id;
