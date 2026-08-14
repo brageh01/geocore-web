@@ -6,6 +6,7 @@ import {
   Cartesian2,
   Cartesian3,
   Color,
+  Ellipsoid,
   Math as CesiumMath,
   NearFarScalar,
   PointPrimitive,
@@ -102,19 +103,87 @@ function quantizeBbox(
 // (BC interior plateau ~600-1800 m, Iberian ranges ~1000-2000 m, most
 // Californian fires below 2000 m) while staying under ~1.5% of the demo's
 // closest framing altitude, where the parallax is not readable. It is also
-// ~0.05% of Earth's radius, comfortably outside the depth epsilon, so far-side
-// occlusion resolves cleanly.
+// ~0.05% of Earth's radius, comfortably outside the depth epsilon, so a marker
+// never z-fights with the surface it sits on.
 export const FIRE_POINT_ALTITUDE_M = 3000;
 
-// Point size vs camera distance. The near end was 1.8, which magnified an
-// already-large marker at exactly the distances the demo presets fly to
-// (~600 km): dense clusters merged into one pale mass that hid the terrain and
-// read as cloud, not fire. Below 1.0 the ramp now *shrinks* markers as the
-// camera closes in, which is what keeps neighbouring detections separate at
-// regional framing. The far end is untouched, so the opening global view is
-// unchanged apart from the smaller base sizes.
+// Camera-to-marker distance (m) below which a marker stops depth-testing and
+// simply draws on top of whatever is in front of it.
+//
+// This is the second half of the occlusion problem. Google's 3D Tiles carry
+// real elevation, so a detection on the far slope of a ridge is legitimately
+// behind terrain and disappears at exactly the moment the user has zoomed in to
+// look at it. Hiding behind the planet and hiding behind a hillside are the
+// same depth test, and for a long time the only dial available was
+// FIRE_POINT_ALTITUDE_M: high enough to clear terrain is also high enough to
+// float over the limb. That is why the two requirements appeared to pull
+// against each other.
+//
+// They are now served by different mechanisms, so they no longer trade off. The
+// horizon cull below hides everything behind the planet by geometry, not by
+// depth, so switching the depth test off up close cannot bring far-side markers
+// back. This value only has to bracket "close enough that the user is looking
+// at this fire": 2000 km sits above every framing the demo flies to (presets
+// settle near 600 km, fire selections nearer 100 km) and far below the ~8000 km
+// opening view, where ordinary depth testing resumes.
+const FIRE_DEPTH_TEST_OFF_WITHIN_M = 2_000_000;
+
+// Horizon culling, in "scaled space". Dividing a position componentwise by the
+// ellipsoid radii maps WGS84 onto a unit sphere, where asking whether a point
+// has dropped behind the curve costs two dot products. This is the same
+// construction as Cesium's internal EllipsoidalOccluder, written out here
+// because that class is not part of the published type surface.
+const ELLIPSOID_ONE_OVER_RADII = Ellipsoid.WGS84.oneOverRadii;
+
+function toScaledSpace(position: Cartesian3, result: Cartesian3): Cartesian3 {
+  return Cartesian3.multiplyComponents(
+    position,
+    ELLIPSOID_ONE_OVER_RADII,
+    result
+  );
+}
+
+/**
+ * Whether a surface position is hidden by the bulk of the planet.
+ *
+ * Both arguments are already in scaled space. `horizonDistanceSq` is
+ * `|cameraScaled|^2 - 1` — the squared distance from the camera to its own
+ * horizon on the unit sphere — hoisted out because it is the same for every
+ * point in a frame.
+ */
+function isBelowHorizon(
+  groundScaled: Cartesian3,
+  cameraScaled: Cartesian3,
+  horizonDistanceSq: number
+): boolean {
+  const vx = groundScaled.x - cameraScaled.x;
+  const vy = groundScaled.y - cameraScaled.y;
+  const vz = groundScaled.z - cameraScaled.z;
+  // How far the point lies along the camera's own inward direction. Farther
+  // than the horizon distance means it has gone round the curve.
+  const inward = -(
+    vx * cameraScaled.x +
+    vy * cameraScaled.y +
+    vz * cameraScaled.z
+  );
+  if (inward <= horizonDistanceSq) return false;
+  const vSq = vx * vx + vy * vy + vz * vz;
+  return (inward * inward) / vSq > horizonDistanceSq;
+}
+
+// Point size vs camera distance. This is the dominant term at regional framing,
+// because it multiplies the base size at exactly the distances the demo presets
+// fly to (~600 km).
+//
+// It has now been wrong in both directions. At 1.8 it magnified an already
+// large marker until dense clusters merged into one pale mass that hid the
+// terrain and read as cloud. At 0.85 it shrank markers below the size at which
+// a single detection is legible at all. 1.3 is the midpoint, and deliberately
+// still well under the original: markers stay distinct from their neighbours
+// but are unambiguously visible. The far end is untouched, so the opening
+// global view changes only through the base sizes.
 const FIRE_POINT_SCALE_NEAR_DISTANCE_M = 200_000;
-const FIRE_POINT_SCALE_NEAR = 0.85;
+const FIRE_POINT_SCALE_NEAR = 1.3;
 const FIRE_POINT_SCALE_FAR_DISTANCE_M = 25_000_000;
 const FIRE_POINT_SCALE_FAR = 0.25;
 
@@ -127,17 +196,21 @@ const FIRE_POINT_SCALE_BY_DISTANCE = new NearFarScalar(
   FIRE_POINT_SCALE_FAR
 );
 
-// Base marker diameter in pixels, before scaleByDistance. Roughly two thirds of
-// the previous ramp (was 14/12/10/8/6). Note the floor cannot go much below
-// this: a dense VIIRS cluster is a 375 m grid, which at the presets' ~600 km
-// framing is under 1 px between neighbours, so some overlap is inherent to the
-// data. The aim is a compact hot mass with visible structure, not separation
-// that the sampling resolution cannot support.
-const FIRE_SIZE_PX_EXTREME = 9; // >= 100 MW
-const FIRE_SIZE_PX_HIGH = 7; //   >= 50 MW
-const FIRE_SIZE_PX_MEDIUM = 6; // >= 20 MW
-const FIRE_SIZE_PX_LOW = 5; //    >= 5 MW
-const FIRE_SIZE_PX_MINIMAL = 4; // below 5 MW
+// Base marker diameter in pixels, before scaleByDistance. Between the original
+// ramp (14/12/10/8/6) and the over-corrected one (9/7/6/5/4), and combined with
+// the scale above this lands the median detection at roughly 55% of its
+// original on-screen diameter at every framing.
+//
+// The floor cannot go much below this: a dense VIIRS cluster is a 375 m grid,
+// which at the presets' ~600 km framing is under 1 px between neighbours, so
+// some overlap is inherent to the data. The aim is a compact hot mass with
+// visible structure, not separation that the sampling resolution cannot
+// support.
+const FIRE_SIZE_PX_EXTREME = 10; // >= 100 MW
+const FIRE_SIZE_PX_HIGH = 8; //    >= 50 MW
+const FIRE_SIZE_PX_MEDIUM = 7; //  >= 20 MW
+const FIRE_SIZE_PX_LOW = 6; //     >= 5 MW
+const FIRE_SIZE_PX_MINIMAL = 5; // below 5 MW
 
 // FRP ramp, fully saturated and pushed toward red. The old low end (#FFB347)
 // was a desaturated peach — at small sizes over pale terrain it read as haze,
@@ -348,6 +421,12 @@ export default function FireLayer({ viewer }: FireLayerProps) {
     collectionRef.current = collection;
 
     const byId = new Map<string, PointPrimitive>();
+    // Parallel arrays for the per-frame horizon cull below. Kept as plain
+    // arrays indexed together rather than objects, because this is walked once
+    // per camera move for every drawn detection.
+    const points: PointPrimitive[] = [];
+    const groundScaled: Cartesian3[] = [];
+
     for (const fire of renderedFires.points) {
       const pickId: FirePickId = { type: "fire", fire };
       const point = collection.add({
@@ -361,22 +440,88 @@ export default function FireLayer({ viewer }: FireLayerProps) {
         outlineColor: DEFAULT_OUTLINE_COLOR,
         outlineWidth: DEFAULT_OUTLINE_WIDTH_PX,
         scaleByDistance: FIRE_POINT_SCALE_BY_DISTANCE,
-        // 0 keeps the depth test on at every distance, so whichever surface is
-        // active — the 3D tileset or the fallback globe — hides points on the
-        // far side of the planet. This only resolves correctly because the
-        // points are lifted off the ellipsoid; see FIRE_POINT_ALTITUDE_M.
-        disableDepthTestDistance: 0,
+        // Depth-test at range, draw on top when the camera is close. See
+        // FIRE_DEPTH_TEST_OFF_WITHIN_M — the far side of the planet is handled
+        // by the horizon cull below, not by this.
+        disableDepthTestDistance: FIRE_DEPTH_TEST_OFF_WITHIN_M,
         id: pickId,
       });
       byId.set(fire.id, point);
+      points.push(point);
+      // Height 0, not FIRE_POINT_ALTITUDE_M: the cull asks whether this fire's
+      // *ground* is over the horizon. Testing the drawn position instead would
+      // keep showing markers for about 1.8 degrees (~200 km) past the limb,
+      // because 3000 m of lift clears the horizon that much earlier — which is
+      // precisely the handful of markers that appear to hover past the planet's
+      // edge.
+      groundScaled.push(
+        toScaledSpace(
+          Cartesian3.fromDegrees(fire.longitude, fire.latitude, 0),
+          new Cartesian3()
+        )
+      );
     }
     primitivesByIdRef.current = byId;
     // The old primitives died with the old collection, so nothing is styled.
     highlightedIdRef.current = null;
 
+    // Hide detections behind the planet, explicitly.
+    //
+    // A GPU point has no notion of the planet being in the way; it is hidden
+    // only because some surface already wrote a nearer depth value. That makes
+    // occlusion a property of the environment rather than of the data. On the
+    // Cesium fallback globe it holds. When the Google tileset loads,
+    // scene.globe.show is set to false and the tileset becomes the only depth
+    // writer — so anywhere it has no geometry (open ocean, unsupported regions,
+    // tiles still streaming) nothing writes depth at all, and every detection on
+    // the far side of the earth draws straight through it.
+    //
+    // The ellipsoid horizon is true whether or not anything has rendered, so the
+    // far side is culled against that instead and the depth buffer is left to do
+    // the only job it is reliable for: local layering against terrain.
+    const lastCameraPosition = new Cartesian3();
+    const cameraScaled = new Cartesian3();
+    const cullBehindHorizon = () => {
+      const cameraPosition = viewer.camera.positionWC;
+      // A still camera costs nothing. Without this the loop runs every frame
+      // even while nothing moves, and every `show` write dirties a vertex
+      // buffer range.
+      if (
+        Cartesian3.equalsEpsilon(
+          cameraPosition,
+          lastCameraPosition,
+          CesiumMath.EPSILON7
+        )
+      ) {
+        return;
+      }
+      Cartesian3.clone(cameraPosition, lastCameraPosition);
+      toScaledSpace(cameraPosition, cameraScaled);
+      const horizonDistanceSq = Cartesian3.magnitudeSquared(cameraScaled) - 1;
+      // A camera at or below the surface has no horizon to speak of; show
+      // everything rather than culling the whole layer on a divide-by-nothing.
+      // minimumZoomDistance keeps this from happening, but the guard is cheap.
+      if (horizonDistanceSq <= 0) {
+        for (let i = 0; i < points.length; i++) points[i].show = true;
+        return;
+      }
+      for (let i = 0; i < points.length; i++) {
+        points[i].show = !isBelowHorizon(
+          groundScaled[i],
+          cameraScaled,
+          horizonDistanceSq
+        );
+      }
+    };
+    cullBehindHorizon();
+    viewer.scene.preRender.addEventListener(cullBehindHorizon);
+
     return () => {
-      if (!viewer.isDestroyed() && collectionRef.current) {
-        viewer.scene.primitives.remove(collectionRef.current);
+      if (!viewer.isDestroyed()) {
+        viewer.scene.preRender.removeEventListener(cullBehindHorizon);
+        if (collectionRef.current) {
+          viewer.scene.primitives.remove(collectionRef.current);
+        }
       }
       collectionRef.current = null;
       primitivesByIdRef.current = new Map();
