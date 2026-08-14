@@ -90,27 +90,35 @@ function quantizeBbox(
 // clamp to whatever surface is under it — it gets one fixed altitude. Two
 // failure modes bound the choice:
 //
-//   Too low: Google Photorealistic 3D Tiles carry real elevation, so a point at
-//   height 0 is buried under any ground above sea level. It also sits coplanar
-//   with the surface it is depth-tested against, which at globe scale is inside
-//   the depth buffer's precision epsilon — the test becomes a coin flip and
-//   far-side points bleed through the planet.
+//   Too low: Cesium World Terrain carries real elevation, so a point at height 0
+//   is buried under any ground above sea level. It also sits coplanar with the
+//   surface it is depth-tested against, which at globe scale is inside the depth
+//   buffer's precision epsilon — the test becomes a coin flip and the marker
+//   speckles in and out against its own ground.
 //
 //   Too high: the marker visibly detaches from its terrain, and an oblique
 //   camera shows it parallax-shifted away from the ground it belongs to.
 //
-// 3000 m clears the terrain under essentially all of the fixture's detections
-// (BC interior plateau ~600-1800 m, Iberian ranges ~1000-2000 m, most
-// Californian fires below 2000 m) while staying under ~1.5% of the demo's
-// closest framing altitude, where the parallax is not readable. It is also
-// ~0.05% of Earth's radius, comfortably outside the depth epsilon, so a marker
-// never z-fights with the surface it sits on.
+// This value was originally guessed against a terrain-free globe. It has since
+// been measured against the real thing: sampling globe.getHeight under all 2830
+// on-screen detections at the BC preset gives ground from 399 m to 2457 m
+// (median 1328 m), so clearance runs 543 m to 2601 m and **nothing is buried**.
+// The worst-case 2601 m of float is 0.7% of the preset's 354 km framing and 2%
+// of the closest selection framing, which is below what reads as detachment.
+//
+// It stays fixed rather than following terrain because a PointPrimitive has no
+// heightReference and per-detection terrain sampling would mean a network round
+// trip for thousands of points that re-resolves as tiles stream. Live global
+// FIRMS data does include fires above 3000 m (Andes, Tibetan plateau) which
+// would sit inside their own hillside — those stay visible anyway, because
+// FIRE_DEPTH_TEST_OFF_WITHIN_M turns the depth test off long before the camera
+// is close enough for it to matter.
 export const FIRE_POINT_ALTITUDE_M = 3000;
 
 // Camera-to-marker distance (m) below which a marker stops depth-testing and
 // simply draws on top of whatever is in front of it.
 //
-// This is the second half of the occlusion problem. Google's 3D Tiles carry
+// This is the second half of the occlusion problem. Cesium World Terrain carries
 // real elevation, so a detection on the far slope of a ridge is legitimately
 // behind terrain and disappears at exactly the moment the user has zoomed in to
 // look at it. Hiding behind the planet and hiding behind a hillside are the
@@ -469,12 +477,12 @@ export default function FireLayer({ viewer }: FireLayerProps) {
     //
     // A GPU point has no notion of the planet being in the way; it is hidden
     // only because some surface already wrote a nearer depth value. That makes
-    // occlusion a property of the environment rather than of the data. On the
-    // Cesium fallback globe it holds. When the Google tileset loads,
-    // scene.globe.show is set to false and the tileset becomes the only depth
-    // writer — so anywhere it has no geometry (open ocean, unsupported regions,
-    // tiles still streaming) nothing writes depth at all, and every detection on
-    // the far side of the earth draws straight through it.
+    // occlusion a property of the environment rather than of the data, and the
+    // environment is not dependable: anywhere the globe has not written depth —
+    // terrain tiles still streaming, or the globe hidden at all — every
+    // detection on the far side of the earth draws straight through it. That
+    // was reproduced directly, by hiding the globe: the entire British Columbia
+    // cluster reappeared as a streak across the limb.
     //
     // The ellipsoid horizon is true whether or not anything has rendered, so the
     // far side is culled against that instead and the depth buffer is left to do

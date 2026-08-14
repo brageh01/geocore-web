@@ -21,7 +21,7 @@ No test framework is configured yet.
 ## Tech Stack
 
 - **Framework**: Next.js (App Router) with TypeScript
-- **3D Globe**: CesiumJS with Google Photorealistic 3D Tiles
+- **3D Globe**: CesiumJS with Cesium World Terrain + Bing Aerial imagery, both via Cesium Ion
 - **Styling**: Tailwind CSS (dark theme, deep black background)
 - **State**: Zustand (`store/useGeocore.ts` — selectedFireId, activeLayers, timelineDate)
 - **Deployment**: Vercel
@@ -54,8 +54,7 @@ They communicate via versioned REST endpoints (`/api/v1/...`). Never commit secr
 Set in `.env.local` (never committed):
 
 ```
-NEXT_PUBLIC_CESIUM_ION_TOKEN=       # Client-safe (Cesium token)
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=    # Client-safe (Google Maps)
+NEXT_PUBLIC_CESIUM_ION_TOKEN=       # Client-safe (Cesium token — terrain + imagery)
 SERVICES_BASE_URL=                  # geocore-services backend URL
 NASA_FIRMS_API_KEY=                 # Server-side only
 AIRNOW_API_KEY=                     # Server-side only
@@ -66,7 +65,7 @@ AIRNOW_API_KEY=                     # Server-side only
 ## MVP Scope
 
 Only these features are in scope for MVP:
-1. 3D globe with Google Photorealistic 3D Tiles via CesiumJS
+1. 3D globe with Cesium World Terrain and Ion satellite imagery via CesiumJS
 2. Wildfire layer (NASA FIRMS)
 3. Air quality layer (OpenAQ/AirNow)
 4. Cause-and-effect visual link between fire → downstream AQI impact

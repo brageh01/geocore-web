@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Viewer } from "cesium";
-import { createViewer, loadPhotorealisticTiles } from "@/lib/cesium";
+import { createViewer, loadWorldTerrain } from "@/lib/cesium";
 import { useGeocore } from "@/store/useGeocore";
 import { DEMO_MODE } from "@/lib/demo/flag";
 import FireLayer from "./FireLayer";
@@ -46,9 +46,9 @@ export default function GlobeViewer() {
     setViewer(created);
     publishViewer(created);
 
-    // Fire and forget: the tileset either becomes the surface or the Cesium
-    // globe stays. It guards against the viewer being destroyed mid-request.
-    void loadPhotorealisticTiles(created);
+    // Fire and forget: terrain either arrives or the globe stays a smooth
+    // ellipsoid. It guards against the viewer being destroyed mid-request.
+    void loadWorldTerrain(created);
 
     return () => {
       setViewer(null);
