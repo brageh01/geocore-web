@@ -2,6 +2,14 @@
 
 import { useGeocore } from "@/store/useGeocore";
 import { compassPoint, getDemoImpact } from "@/lib/demo/fakeAQI";
+import { AQI_BANDS } from "@/lib/aqiScale";
+
+// The EPA ramp, as a CSS gradient, taken from the same table the globe colours
+// stations with. Written once and reused by the swatch and the strip so the two
+// cannot drift apart, and so neither can drift from what is actually drawn.
+const AQI_GRADIENT = `linear-gradient(90deg, ${AQI_BANDS.map(
+  (band) => band.color
+).join(", ")})`;
 
 /**
  * Bottom-left key for the globe — demo mode only.
@@ -34,25 +42,37 @@ export default function GlobeLegend() {
           />
         </LegendRow>
 
+        {/* Solid, unringed — matching FireLayer, where every unselected
+            detection lost its pale halo. The old swatch still advertised a
+            1px #FFD6A0 ring that no marker on the globe carries. */}
         <LegendRow label="wildfire detection">
           <span
             className="block w-2 h-2 rounded-full"
-            style={{
-              backgroundColor: "#FF3D00",
-              border: "1px solid #FFD6A0",
-            }}
+            style={{ backgroundColor: "#FF4E00" }}
           />
         </LegendRow>
 
-        <LegendRow label="air quality station">
+        {/* Stations are drawn as numbered discs coloured by aqiToColor, so the
+            swatch is one too: a disc carrying the whole ramp, so it cannot
+            claim a fixed colour the globe does not use, with a digit to say the
+            numbers are part of the mark. The strip underneath names the ramp's
+            ends. "numbered" is there because a bare digit does not say it means
+            anything; which number is which is self-evident from the panel,
+            which lists the stations in the same order with the same discs. */}
+        <LegendRow label="air quality station, numbered">
           <span
-            className="block w-2 h-2 rounded-full"
+            className="block w-4 h-4 rounded-full font-mono text-[8px] font-bold leading-none flex items-center justify-center"
             style={{
-              backgroundColor: "#8F3F97",
-              border: "1px solid rgba(255,255,255,0.85)",
+              backgroundImage: AQI_GRADIENT,
+              boxShadow: "0 0 0 1px rgba(255,255,255,0.85)",
+              color: "#111111",
             }}
-          />
+          >
+            1
+          </span>
         </LegendRow>
+
+        <AQIScaleStrip />
 
         {impact && (
           <div className="pt-1.5 mt-0.5 border-t border-[#262626] flex items-center gap-2">
@@ -71,6 +91,32 @@ export default function GlobeLegend() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The EPA ramp under the station row, indented to start where the labels do
+ * (w-4 icon column + gap-2 = 24px). Discrete bands rather than a smooth
+ * gradient, because the scale itself is banded — a continuous wash would imply
+ * the colour interpolates, which it does not.
+ */
+function AQIScaleStrip() {
+  return (
+    <div className="pl-6">
+      <div className="flex w-[92px] h-[3px]">
+        {AQI_BANDS.map((band) => (
+          <span
+            key={band.upperAqi}
+            className="flex-1"
+            style={{ backgroundColor: band.color }}
+          />
+        ))}
+      </div>
+      <div className="flex w-[92px] justify-between font-mono text-[7px] text-[#525252] mt-0.5">
+        <span>good</span>
+        <span>hazardous</span>
       </div>
     </div>
   );

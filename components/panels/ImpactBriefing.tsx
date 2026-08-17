@@ -6,6 +6,7 @@ import {
   AQI_BANDS,
   aqiCategoryName,
   aqiCategoryPhrase,
+  aqiToBadgeTextColor,
   aqiToColor,
   aqiToTextColor,
 } from "@/lib/aqiScale";
@@ -89,13 +90,16 @@ export default function ImpactBriefing({ fire }: { fire: FireEvent }) {
         </div>
       </div>
 
-      {/* 3 — every station, nearest first, each with a category in words. */}
+      {/* 3 — every station, nearest first, each with a category in words. The
+          leading number is the same badge the globe draws on that station, in
+          the same order and the same colour, so a viewer can go from a disc on
+          the map to its row here without reading a name off either. */}
       <div className="mb-4">
         <div className="font-mono text-[10px] font-bold tracking-widest text-[#737373] uppercase mb-2">
           Air quality downwind
         </div>
         <div className="space-y-1.5">
-          {stations.map((station) => {
+          {stations.map((station, index) => {
             const swatch = aqiToColor(station.aqi);
             const text = aqiToTextColor(station.aqi);
             return (
@@ -104,8 +108,11 @@ export default function ImpactBriefing({ fire }: { fire: FireEvent }) {
                 className="border-b border-[#1a1a1a] pb-1.5 last:border-b-0"
               >
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-mono text-[11px] text-[#e5e5e5] truncate">
-                    {station.name}
+                  <span className="flex items-baseline gap-1.5 min-w-0">
+                    <StationBadge index={index + 1} aqi={station.aqi} />
+                    <span className="font-mono text-[11px] text-[#e5e5e5] truncate">
+                      {station.name}
+                    </span>
                   </span>
                   <span className="font-mono text-[9px] text-[#737373] shrink-0">
                     {station.distanceKm.toFixed(0)} km away
@@ -189,6 +196,28 @@ export default function ImpactBriefing({ fire }: { fire: FireEvent }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The station's index, drawn as the same disc the globe puts on it.
+ *
+ * Deliberately not a plain "1." — matching the globe's mark exactly is what
+ * makes the pairing readable at a glance, and the AQI fill means the row
+ * carries the same colour cue the disc does.
+ */
+function StationBadge({ index, aqi }: { index: number; aqi: number }) {
+  return (
+    <span
+      className="shrink-0 w-[15px] h-[15px] rounded-full flex items-center justify-center font-mono text-[9px] font-bold leading-none self-center"
+      style={{
+        backgroundColor: aqiToColor(aqi),
+        color: aqiToBadgeTextColor(aqi),
+        boxShadow: "0 0 0 1px rgba(255,255,255,0.55)",
+      }}
+    >
+      {index}
+    </span>
   );
 }
 

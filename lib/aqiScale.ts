@@ -47,6 +47,31 @@ export function aqiToTextColor(aqi: number): string {
   return "#F2557A";
 }
 
+/**
+ * Black or white, whichever is more readable printed *on* the band colour.
+ *
+ * The station badges on the globe carry a digit inside a disc filled with the
+ * EPA colour, and that scale spans #FFFF00 to #7E0023 — no single ink works
+ * across it. Rather than hand-assign one per band, this picks by WCAG relative
+ * luminance, so it stays correct if a band colour is ever adjusted. The worst
+ * case on the current six is 5.2:1 (black on #FF0000); every other band clears
+ * 6:1.
+ */
+export function aqiToBadgeTextColor(aqi: number): string {
+  return relativeLuminance(aqiToColor(aqi)) > 0.18 ? "#111111" : "#FFFFFF";
+}
+
+/** WCAG 2.x relative luminance of a `#rrggbb` string. */
+function relativeLuminance(hex: string): number {
+  const channel = (offset: number) => {
+    const srgb = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return srgb <= 0.04045
+      ? srgb / 12.92
+      : Math.pow((srgb + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
 export function aqiCategoryName(aqi: number): string {
   if (aqi <= 50) return "Good";
   if (aqi <= 100) return "Moderate";

@@ -19,6 +19,7 @@ import { useFireData } from "@/hooks/useFireData";
 import { useGeocore } from "@/store/useGeocore";
 import type { FireEvent } from "@/lib/contracts";
 import { DEMO_MODE } from "@/lib/demo/flag";
+import { FRP_COLOR_RAMP, frpToCssColor } from "@/lib/fireScale";
 
 // Debounce window for camera-driven fire refetches. A trackpad pinch emits a
 // long burst of camera events; at 400ms an unhurried zoom still slipped
@@ -220,18 +221,17 @@ const FIRE_SIZE_PX_MEDIUM = 7; //  >= 20 MW
 const FIRE_SIZE_PX_LOW = 6; //     >= 5 MW
 const FIRE_SIZE_PX_MINIMAL = 5; // below 5 MW
 
-// FRP ramp, fully saturated and pushed toward red. The old low end (#FFB347)
-// was a desaturated peach — at small sizes over pale terrain it read as haze,
-// and it is the colour the weakest detections use, which is most of them. Every
-// stop is now at 100% saturation with hue falling from 28deg to 5deg as power
-// rises, so the ramp reads as heat and the dimmest marker is still unmistakably
-// fire. All stops are fully opaque — as the old ones were; the paleness came
-// from the desaturated fill and the halo, not from alpha.
-const FIRE_COLOR_EXTREME = Color.fromCssColorString("#FF1500");
-const FIRE_COLOR_HIGH = Color.fromCssColorString("#FF3300");
-const FIRE_COLOR_MEDIUM = Color.fromCssColorString("#FF4E00");
-const FIRE_COLOR_LOW = Color.fromCssColorString("#FF6200");
-const FIRE_COLOR_MINIMAL = Color.fromCssColorString("#FF7A0A");
+// The FRP ramp lives in lib/fireScale.ts so the panels can share it — see the
+// note there. Parsed once at module load and looked up by the string, so the
+// globe and the ACTIVE EVENTS list cannot drift apart again. All stops are
+// fully opaque; the paleness the old ramp had came from desaturated fill and
+// the halo, not from alpha.
+const FIRE_COLORS = new Map(
+  FRP_COLOR_RAMP.map((stop) => [
+    stop.color,
+    Color.fromCssColorString(stop.color),
+  ])
+);
 
 interface FireLayerProps {
   viewer: Viewer;
@@ -247,11 +247,7 @@ interface FirePickId {
 
 function colorForFrp(frp: number): Color {
   // Hot orange→red gradient based on fire radiative power (MW)
-  if (frp >= 100) return FIRE_COLOR_EXTREME;
-  if (frp >= 50) return FIRE_COLOR_HIGH;
-  if (frp >= 20) return FIRE_COLOR_MEDIUM;
-  if (frp >= 5) return FIRE_COLOR_LOW;
-  return FIRE_COLOR_MINIMAL;
+  return FIRE_COLORS.get(frpToCssColor(frp)) as Color;
 }
 
 function sizeForFrp(frp: number): number {

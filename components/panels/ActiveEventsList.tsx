@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useGeocore } from "@/store/useGeocore";
 import { getDemoImpact } from "@/lib/demo/fakeAQI";
 import { aqiToTextColor } from "@/lib/aqiScale";
+import { frpIntensityLabel, frpToCssColor } from "@/lib/fireScale";
 import TechnicalDataToggle from "@/components/panels/TechnicalDataToggle";
 import {
   clusterFireEventsCached,
@@ -22,36 +23,6 @@ import {
  */
 
 const MAX_LISTED_EVENTS = 10;
-
-/**
- * Fire radiative power, in words.
- *
- * FRP is the radiative output of a single ~375 m VIIRS pixel, so the numbers
- * are much smaller than a whole fire's energy and "1603 MW" tells a layperson
- * nothing. Most detections in a normal scene sit under 10 MW; anything over
- * 100 MW is a genuinely intense pixel and four figures is exceptional — the
- * fixture's largest is 1603 MW. Thresholds are set to spread the top of the
- * list across more than one word rather than to match any published standard,
- * of which there is none for per-pixel FRP.
- */
-function intensityLabel(frp: number): string {
-  if (frp >= 1000) return "Extreme";
-  if (frp >= 300) return "Major";
-  if (frp >= 100) return "Significant";
-  if (frp >= 25) return "Moderate";
-  return "Minor";
-}
-
-// Mirrors the FRP ramp in FireLayer. Duplicated rather than imported because
-// FireLayer pulls in Cesium at module scope, and this panel is rendered outside
-// the `ssr: false` boundary that keeps Cesium out of the server render.
-function cssColorForFrp(frp: number): string {
-  if (frp >= 100) return "#FF1A00";
-  if (frp >= 50) return "#FF3D00";
-  if (frp >= 20) return "#FF6A00";
-  if (frp >= 5) return "#FF8C1A";
-  return "#FFB347";
-}
 
 export default function ActiveEventsList() {
   const fires = useGeocore((s) => s.fires);
@@ -128,7 +99,7 @@ function EventRow({
   outsideTopList: boolean;
   onSelect: () => void;
 }) {
-  const color = cssColorForFrp(event.maxFrp);
+  const color = frpToCssColor(event.maxFrp);
   // Same generator the globe and the briefing use, and it is cached by fire id,
   // so this costs nothing beyond a map lookup after the first render.
   const impact = getDemoImpact(event.seed);
@@ -175,7 +146,7 @@ function EventRow({
           className="font-mono text-[9px] shrink-0"
           style={{ color }}
         >
-          {intensityLabel(event.maxFrp)}
+          {frpIntensityLabel(event.maxFrp)}
         </span>
         <span
           className="font-mono text-[9px] tabular-nums truncate text-right"
